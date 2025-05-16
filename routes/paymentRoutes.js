@@ -7,7 +7,7 @@ import {
   deletePayment,
   getOverdueAccounts,
   generateReceipt,
-  sendReceipt,
+  sendReceipt
 } from "../controllers/paymentController.js";
 import { authenticate, authorize } from "../middlewares/authMiddleware.js";
 

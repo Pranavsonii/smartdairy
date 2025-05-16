@@ -62,6 +62,7 @@ export const initializeSchema = async () => {
       CREATE TABLE IF NOT EXISTS routes (
         route_id SERIAL PRIMARY KEY,
         name VARCHAR(255) NOT NULL,
+        description VARCHAR(255) NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
@@ -73,6 +74,7 @@ export const initializeSchema = async () => {
         route_id INTEGER REFERENCES routes(route_id) ON DELETE CASCADE,
         customer_id INTEGER REFERENCES customers(customer_id) ON DELETE CASCADE,
         position INTEGER NOT NULL,
+        outlet_id INTEGER REFERENCES outlets(outlet_id) ON DELETE SET NULL,
         PRIMARY KEY (route_id, customer_id)
       )
     `);
@@ -81,6 +83,8 @@ export const initializeSchema = async () => {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS drives (
         drive_id SERIAL PRIMARY KEY,
+        drive_name VARCHAR(255) NOT NULL,
+        outlet_id INTEGER REFERENCES outlets(outlet_id),
         delivery_guy_id INTEGER REFERENCES delivery_guys(delivery_guy_id),
         route_id INTEGER REFERENCES routes(route_id),
         stock INTEGER NOT NULL,

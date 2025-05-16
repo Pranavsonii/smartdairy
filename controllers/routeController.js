@@ -4,8 +4,26 @@ export const getRoutes = async (req, res) => {
   try {
     const result = await pool.query("SELECT * FROM routes ORDER BY name");
 
+    // fetch all customers associated with each route
+    const routesWithCustomers = await Promise.all(
+      result.rows.map(async (route) => {
+        const customersResult = await pool.query(
+          `SELECT c.*
+           FROM customers c
+           JOIN route_customers rc ON c.customer_id = rc.customer_id
+           WHERE rc.route_id = $1
+           ORDER BY c.name`,
+          [route.route_id]
+        );
+        return {
+          ...route,
+          customers: customersResult.rows
+        };
+      })
+    );
+
     res.json({
-      routes: result.rows,
+      routes: result.rows
     });
   } catch (error) {
     console.error("Get routes error:", error);
@@ -17,16 +35,17 @@ export const getRouteById = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const result = await pool.query("SELECT * FROM routes WHERE route_id = $1", [
-      id,
-    ]);
+    const result = await pool.query(
+      "SELECT * FROM routes WHERE route_id = $1",
+      [id]
+    );
 
     if (result.rows.length === 0) {
       return res.status(404).json({ message: "Route not found" });
     }
 
     res.json({
-      route: result.rows[0],
+      route: result.rows[0]
     });
   } catch (error) {
     console.error("Get route by ID error:", error);
@@ -36,10 +55,20 @@ export const getRouteById = async (req, res) => {
 
 export const createRoute = async (req, res) => {
   try {
-    const { name } = req.body;
+    const { name, description, customer_ids } = req.body;
 
     if (!name) {
       return res.status(400).json({ message: "Route name is required" });
+    }
+    // Check if description is provided
+    if (!description) {
+      return res.status(400).json({ message: "Route description is required" });
+    }
+    // Check if customer_ids is an array
+    if (!Array.isArray(customer_ids)) {
+      return res.status(400).json({
+        message: "Customer IDs should be an array"
+      });
     }
 
     // Check if route with same name already exists
@@ -61,7 +90,7 @@ export const createRoute = async (req, res) => {
 
     res.status(201).json({
       message: "Route created successfully",
-      route: result.rows[0],
+      route: result.rows[0]
     });
   } catch (error) {
     console.error("Create route error:", error);
@@ -107,7 +136,7 @@ export const updateRoute = async (req, res) => {
 
     res.json({
       message: "Route updated successfully",
-      route: result.rows[0],
+      route: result.rows[0]
     });
   } catch (error) {
     console.error("Update route error:", error);
@@ -138,7 +167,7 @@ export const deleteRoute = async (req, res) => {
     if (driveCheckResult.rows.length > 0) {
       return res.status(400).json({
         message: "Cannot delete route with active drives",
-        activeDrivers: driveCheckResult.rows.length,
+        activeDrivers: driveCheckResult.rows.length
       });
     }
 
@@ -215,7 +244,7 @@ export const addCustomersToRoute = async (req, res) => {
       addedCount: addedCustomers.length,
       skippedCount: skippedCustomers.length,
       addedCustomers,
-      skippedCustomers,
+      skippedCustomers
     });
   } catch (error) {
     console.error("Add customers to route error:", error);
@@ -278,7 +307,7 @@ export const getRouteCustomers = async (req, res) => {
     res.json({
       route_id: parseInt(id),
       customers: result.rows,
-      count: result.rows.length,
+      count: result.rows.length
     });
   } catch (error) {
     console.error("Get route customers error:", error);

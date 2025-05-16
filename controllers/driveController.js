@@ -123,7 +123,7 @@ export const getDriveById = async (req, res) => {
 
 export const createDrive = async (req, res) => {
   try {
-    const { route_id, delivery_guy_id, stock, remarks } = req.body;
+    const { route_id, delivery_guy_id, stock, remarks,drive_name, start_time } = req.body;
 
     // Basic validation
     if (!route_id || !stock) {

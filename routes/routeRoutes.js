@@ -7,7 +7,7 @@ import {
   deleteRoute,
   addCustomersToRoute,
   removeCustomerFromRoute,
-  getRouteCustomers,
+  getRouteCustomers
 } from "../controllers/routeController.js";
 import { authenticate, authorize } from "../middlewares/authMiddleware.js";
 

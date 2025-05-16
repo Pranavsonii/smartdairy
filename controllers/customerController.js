@@ -418,7 +418,7 @@ export const getCustomerRoutes = async (req, res) => {
 
     // Query to get all routes with this customer
     const result = await pool.query(
-      `SELECT r.route_id, r.name, r.description, r.status, r.created_at
+      `SELECT r.route_id, r.name, r.created_at
        FROM routes r
        JOIN route_customers rc ON r.route_id = rc.route_id
        WHERE rc.customer_id = $1
