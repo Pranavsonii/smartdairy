@@ -55,7 +55,7 @@ export const getRouteById = async (req, res) => {
 
 export const createRoute = async (req, res) => {
   try {
-    const { name, description, customer_ids } = req.body;
+    const { name, description, customer_ids, route } = req.body;
 
     if (!name) {
       return res.status(400).json({ message: "Route name is required" });
@@ -83,10 +83,16 @@ export const createRoute = async (req, res) => {
         .json({ message: "Route with this name already exists" });
     }
 
-    const result = await pool.query(
-      "INSERT INTO routes (name) VALUES ($1) RETURNING *",
-      [name]
-    );
+    // Insert route with name and description
+    const insertQuery = route
+      ? "INSERT INTO routes (name, description, route_data) VALUES ($1, $2, $3) RETURNING *"
+      : "INSERT INTO routes (name, description) VALUES ($1, $2) RETURNING *";
+
+    const insertParams = route
+      ? [name, description, JSON.stringify(route)]
+      : [name, description];
+
+    const result = await pool.query(insertQuery, insertParams);
 
     res.status(201).json({
       message: "Route created successfully",

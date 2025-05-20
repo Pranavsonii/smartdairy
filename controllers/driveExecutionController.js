@@ -76,13 +76,13 @@ export const getDriveExecution = async (req, res) => {
       total_amount: parseFloat(salesSummary.rows[0].totalamount) || 0,
       successful_deliveries:
         parseInt(salesSummary.rows[0].successfuldeliveries) || 0,
-      failed_deliveries: parseInt(salesSummary.rows[0].faileddeliveries) || 0,
+      failed_deliveries: parseInt(salesSummary.rows[0].faileddeliveries) || 0
     };
 
     res.json({
       drive,
       customers: customersResult.rows,
-      progress,
+      progress
     });
   } catch (error) {
     console.error("Get drive execution error:", error);
@@ -95,10 +95,11 @@ export const recordSale = async (req, res) => {
     const { id } = req.params;
     const { customer_id, quantity, price, status = "success" } = req.body;
 
-    if (!customer_id || !quantity || !price) {
+    // Removed quantity from required fields check
+    if (!customer_id || !price) {
       return res
         .status(400)
-        .json({ message: "Customer ID, quantity, and price are required" });
+        .json({ message: "Customer ID and price are required" });
     }
 
     // Check if drive exists and is ongoing
@@ -146,8 +147,11 @@ export const recordSale = async (req, res) => {
       [id, customer_id]
     );
 
+    // Use provided quantity or default to 1
+    const saleQuantity = quantity || 1;
+
     // Calculate total amount
-    const total_amount = quantity * price;
+    const total_amount = saleQuantity * price;
 
     const client = await pool.connect();
 
@@ -163,7 +167,7 @@ export const recordSale = async (req, res) => {
            SET quantity = $1, price = $2, total_amount = $3, status = $4, updated_at = NOW()
            WHERE drive_id = $5 AND customer_id = $6
            RETURNING *`,
-          [quantity, price, total_amount, status, id, customer_id]
+          [saleQuantity, price, total_amount, status, id, customer_id]
         );
       } else {
         // Create new sale
@@ -172,7 +176,7 @@ export const recordSale = async (req, res) => {
            (drive_id, customer_id, quantity, price, total_amount, status)
            VALUES ($1, $2, $3, $4, $5, $6)
            RETURNING *`,
-          [id, customer_id, quantity, price, total_amount, status]
+          [id, customer_id, saleQuantity, price, total_amount, status]
         );
       }
 
@@ -191,7 +195,7 @@ export const recordSale = async (req, res) => {
         message: `Sale ${
           existingSaleCheck.rows.length > 0 ? "updated" : "recorded"
         } successfully`,
-        sale: result.rows[0],
+        sale: result.rows[0]
       });
     } catch (err) {
       await client.query("ROLLBACK");
@@ -269,13 +273,13 @@ export const skipCustomer = async (req, res) => {
         id,
         customer_id,
         customerCheck.rows[0].price,
-        reason || "Customer skipped",
+        reason || "Customer skipped"
       ]
     );
 
     res.json({
       message: "Customer skipped successfully",
-      skippedDelivery: result.rows[0],
+      skippedDelivery: result.rows[0]
     });
   } catch (error) {
     console.error("Skip customer error:", error);
@@ -364,7 +368,7 @@ export const scanQrCode = async (req, res) => {
           qrCodeData.qrid,
           deliveryQuantity,
           qrCodeData.price,
-          total_amount,
+          total_amount
         ]
       );
 
@@ -384,9 +388,9 @@ export const scanQrCode = async (req, res) => {
         customer: {
           customer_id: qrCodeData.customer_id,
           name: qrCodeData.name,
-          phone: qrCodeData.phone,
+          phone: qrCodeData.phone
         },
-        sale: saleResult.rows[0],
+        sale: saleResult.rows[0]
       });
     } catch (err) {
       await client.query("ROLLBACK");
@@ -475,7 +479,7 @@ export const getDriveProgress = async (req, res) => {
       stock: drive.stock,
       remainingStock:
         drive.stock - (parseInt(salesSummary.rows[0].quantitydelivered) || 0),
-      lastLocation: lastLocationResult.rows[0] || null,
+      lastLocation: lastLocationResult.rows[0] || null
     };
 
     res.json({ progress });
@@ -538,7 +542,7 @@ export const reconcileDrive = async (req, res) => {
 
       res.json({
         message: "Drive reconciled successfully",
-        drive: result.rows[0],
+        drive: result.rows[0]
       });
     } catch (err) {
       await client.query("ROLLBACK");
