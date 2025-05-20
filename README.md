@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Milk Delivery Management System Backend
 
 This is the backend API for the Milk Delivery Management System, a comprehensive application designed to streamline daily dairy business operations.
@@ -76,3 +77,6 @@ The API endpoints are organized into the following groups:
 For detailed API documentation, see the [API Documentation](Milk%20Apis.md) file.
 
 ## Project Structure
+=======
+# smartdairy
+>>>>>>> 3f0098dd2729bbe1313d37676e76a537d6a85413
