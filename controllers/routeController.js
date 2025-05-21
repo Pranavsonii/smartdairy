@@ -1,5 +1,4 @@
 import pool from "../config/database.js";
-
 export const getRoutes = async (req, res) => {
   try {
     const result = await pool.query("SELECT * FROM routes ORDER BY name");
@@ -23,7 +22,7 @@ export const getRoutes = async (req, res) => {
     );
 
     res.json({
-      routes: result.rows
+      routes: routesWithCustomers
     });
   } catch (error) {
     console.error("Get routes error:", error);

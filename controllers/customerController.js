@@ -1,5 +1,4 @@
 import pool from "../config/database.js";
-
 export const getCustomers = async (req, res) => {
   try {
     // Get pagination parameters from query
@@ -62,8 +61,23 @@ export const getCustomers = async (req, res) => {
 
     const totalCount = parseInt(countResult.rows[0].count);
 
+    // Fetch QR data for each customer
+    const customers = await Promise.all(
+      result.rows.map(async (customer) => {
+        const qrResult = await pool.query(
+          "SELECT * FROM qr WHERE customer_id = $1",
+          [customer.customer_id]
+        );
+
+        return {
+          ...customer,
+          qr: qrResult.rows.length > 0 ? qrResult.rows[0] : null
+        };
+      })
+    );
+
     res.json({
-      customers: result.rows,
+      customers,
       pagination: {
         page,
         limit,
