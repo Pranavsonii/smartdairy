@@ -1,4 +1,5 @@
 import pool from "../config/database.js";
+
 export const getCustomers = async (req, res) => {
   try {
     // Get pagination parameters from query
@@ -9,18 +10,19 @@ export const getCustomers = async (req, res) => {
     // Get filter parameters
     const { name, location, status } = req.query;
 
+    // Initialize query and parameters
     let query = "SELECT * FROM customers WHERE 1=1";
     const params = [];
 
     // Apply filters if provided
     if (name) {
       params.push(`%${name}%`);
-      query += ` AND name ILIKE $${params.length}`;
+      query += ` AND name LIKE $${params.length}`;
     }
 
     if (location) {
       params.push(`%${location}%`);
-      query += ` AND location ILIKE $${params.length}`;
+      query += ` AND location LIKE $${params.length}`;
     }
 
     if (status) {
@@ -46,8 +48,8 @@ export const getCustomers = async (req, res) => {
     // Get total count for pagination
     const countResult = await pool.query(
       `SELECT COUNT(*) FROM customers WHERE 1=1${
-        name ? " AND name ILIKE $1" : ""
-      }${location ? ` AND location ILIKE $${name ? 2 : 1}` : ""}${
+        name ? " AND name LIKE $1" : ""
+      }${location ? ` AND location LIKE $${name ? 2 : 1}` : ""}${
         status
           ? ` AND status = $${(name ? 1 : 0) + (location ? 1 : 0) + 1}`
           : ""
@@ -55,7 +57,7 @@ export const getCustomers = async (req, res) => {
       [
         ...(name ? [`%${name}%`] : []),
         ...(location ? [`%${location}%`] : []),
-        ...(status ? [status] : []),
+        ...(status ? [status] : [])
       ]
     );
 
@@ -65,7 +67,7 @@ export const getCustomers = async (req, res) => {
     const customers = await Promise.all(
       result.rows.map(async (customer) => {
         const qrResult = await pool.query(
-          "SELECT * FROM qr WHERE customer_id = $1",
+          "SELECT * FROM qr_codes WHERE customer_id = $1",
           [customer.customer_id]
         );
 
@@ -82,8 +84,8 @@ export const getCustomers = async (req, res) => {
         page,
         limit,
         totalCount,
-        totalPages: Math.ceil(totalCount / limit),
-      },
+        totalPages: Math.ceil(totalCount / limit)
+      }
     });
   } catch (error) {
     console.error("Get customers error:", error);
@@ -104,7 +106,16 @@ export const getCustomerById = async (req, res) => {
       return res.status(404).json({ message: "Customer not found" });
     }
 
-    res.json({ customer: result.rows[0] });
+    // Fetch and add qr code related data to customer
+    const qrResult = await pool.query(
+      "SELECT * FROM qr_codes WHERE customer_id = $1",
+      [id]
+    );
+    const qrCode = qrResult.rows.length > 0 ? qrResult.rows[0] : null;
+    const customer = result.rows[0];
+    customer.qr = qrCode;
+
+    res.json({ customer: customer });
   } catch (error) {
     console.error("Get customer by ID error:", error);
     res.status(500).json({ message: "Server error" });
@@ -113,7 +124,8 @@ export const getCustomerById = async (req, res) => {
 
 export const createCustomer = async (req, res) => {
   try {
-    const { name, location, phone, address, price, default_quantity } = req.body;
+    const { name, location, phone, address, price, default_quantity } =
+      req.body;
 
     // Basic validation
     if (!name || !phone || !price) {
@@ -141,7 +153,7 @@ export const createCustomer = async (req, res) => {
 
     res.status(201).json({
       message: "Customer created successfully",
-      customer: result.rows[0],
+      customer: result.rows[0]
     });
   } catch (error) {
     console.error("Create customer error:", error);
@@ -240,7 +252,7 @@ export const updateCustomer = async (req, res) => {
 
     res.json({
       message: "Customer updated successfully",
-      customer: result.rows[0],
+      customer: result.rows[0]
     });
   } catch (error) {
     console.error("Update customer error:", error);
@@ -314,7 +326,7 @@ export const addCustomerPoints = async (req, res) => {
 
     res.json({
       message: "Points added successfully",
-      points: result.rows[0].points,
+      points: result.rows[0].points
     });
   } catch (error) {
     console.error("Add customer points error:", error);
@@ -356,7 +368,7 @@ export const deductCustomerPoints = async (req, res) => {
 
     res.json({
       message: "Points deducted successfully",
-      points: result.rows[0].points,
+      points: result.rows[0].points
     });
   } catch (error) {
     console.error("Deduct customer points error:", error);
@@ -401,15 +413,14 @@ export const getCustomerPaymentLogs = async (req, res) => {
         page,
         limit,
         totalCount,
-        totalPages: Math.ceil(totalCount / limit),
-      },
+        totalPages: Math.ceil(totalCount / limit)
+      }
     });
   } catch (error) {
     console.error("Get customer payment logs error:", error);
     res.status(500).json({ message: "Server error" });
   }
 };
-
 
 export const getCustomerRoutes = async (req, res) => {
   try {
@@ -458,8 +469,8 @@ export const getCustomerRoutes = async (req, res) => {
         page,
         limit,
         totalCount,
-        totalPages: Math.ceil(totalCount / limit),
-      },
+        totalPages: Math.ceil(totalCount / limit)
+      }
     });
   } catch (error) {
     console.error("Get customer routes error:", error);

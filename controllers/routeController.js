@@ -43,8 +43,19 @@ export const getRouteById = async (req, res) => {
       return res.status(404).json({ message: "Route not found" });
     }
 
+    // get customers associated with the route
+    const customersResult = await pool.query(
+      `SELECT c.*
+       FROM customers c
+       JOIN route_customers rc ON c.customer_id = rc.customer_id
+       WHERE rc.route_id = $1
+       ORDER BY c.name`,
+      [id]
+    );
+    const customers = customersResult.rows;
+
     res.json({
-      route: result.rows[0]
+      route: { ...result.rows[0], customers: customers }
     });
   } catch (error) {
     console.error("Get route by ID error:", error);
@@ -54,7 +65,7 @@ export const getRouteById = async (req, res) => {
 
 export const createRoute = async (req, res) => {
   try {
-    const { name, description, customer_ids, route } = req.body;
+    const { name, description, route } = req.body;
 
     if (!name) {
       return res.status(400).json({ message: "Route name is required" });
@@ -63,12 +74,12 @@ export const createRoute = async (req, res) => {
     if (!description) {
       return res.status(400).json({ message: "Route description is required" });
     }
-    // Check if customer_ids is an array
-    if (!Array.isArray(customer_ids)) {
-      return res.status(400).json({
-        message: "Customer IDs should be an array"
-      });
-    }
+    // // Check if customer_ids is an array
+    // if (!Array.isArray(customer_ids)) {
+    //   return res.status(400).json({
+    //     message: "Customer IDs should be an array"
+    //   });
+    // }
 
     // Check if route with same name already exists
     const checkResult = await pool.query(
