@@ -134,17 +134,23 @@ export const generateQrCodes = async (req, res) => {
 
 export const assignQrToCustomer = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { code } = req.params;
     const { customer_id } = req.body;
 
     if (!customer_id) {
       return res.status(400).json({ message: "Customer ID is required" });
     }
 
+    console.log(req.params);
+
+
+    console.log("Assigning QR code:", code, "to customer:", customer_id);
+
+
     // Check if QR code exists
     const qrCheckResult = await pool.query(
-      "SELECT * FROM qr_codes WHERE qr_id = $1",
-      [id]
+      "SELECT * FROM qr_codes WHERE code = $1",
+      [code]
     );
 
     if (qrCheckResult.rows.length === 0) {
@@ -176,7 +182,7 @@ export const assignQrToCustomer = async (req, res) => {
        SET customer_id = $1, status = 'active', activated_at = NOW(), updated_at = NOW()
        WHERE qr_id = $2
        RETURNING *`,
-      [customer_id, id]
+      [customer_id, qrCode.qr_id]
     );
 
     res.json({

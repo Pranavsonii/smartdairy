@@ -17,7 +17,7 @@ router.get("/download", authenticate, authorize(["admin"]), downloadQrCodes);
 router.get("/:id", authenticate, getQrCodeById);
 router.post("/generate", authenticate, authorize(["admin"]), generateQrCodes);
 router.post(
-  "/:id/assign",
+  "/:code/assign",
   authenticate,
   authorize(["admin"]),
   assignQrToCustomer
