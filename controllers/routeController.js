@@ -160,6 +160,7 @@ export const updateRoute = async (req, res) => {
   }
 };
 
+
 export const deleteRoute = async (req, res) => {
   try {
     const { id } = req.params;

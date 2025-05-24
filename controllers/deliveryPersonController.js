@@ -1,4 +1,5 @@
 import pool from "../config/database.js";
+import bcrypt from "bcrypt";
 
 export const getDeliveryPersons = async (req, res) => {
   try {
@@ -44,16 +45,61 @@ export const getDeliveryPersonById = async (req, res) => {
   }
 };
 
+// export const createDeliveryPerson = async (req, res) => {
+//   try {
+//     const { name, phone, address } = req.body;
+
+//     // Basic validation
+//     if (!name || !phone) {
+//       return res.status(400).json({ message: "Name and phone are required" });
+//     }
+
+//     // Check if phone already exists
+//     const phoneCheck = await pool.query(
+//       "SELECT delivery_guy_id FROM delivery_guys WHERE phone = $1",
+//       [phone]
+//     );
+
+//     if (phoneCheck.rows.length > 0) {
+//       return res.status(400).json({ message: "Phone number already in use" });
+//     }
+
+//     // Create delivery person
+//     const result = await pool.query(
+//       `INSERT INTO delivery_guys (name, phone, address)
+//        VALUES ($1, $2, $3)
+//        RETURNING *`,
+//       [name, phone, address || null]
+//     );
+
+//     res.status(201).json({
+//       message: "Delivery person created successfully",
+//       deliveryPerson: result.rows[0],
+//     });
+//   } catch (error) {
+//     console.error("Create delivery person error:", error);
+//     res.status(500).json({ message: "Server error" });
+//   }
+// };
+
+
+
 export const createDeliveryPerson = async (req, res) => {
   try {
-    const { name, phone, address } = req.body;
+    const { name, phone, address, password, createUserAccount = true } = req.body;
 
     // Basic validation
     if (!name || !phone) {
       return res.status(400).json({ message: "Name and phone are required" });
     }
 
-    // Check if phone already exists
+    if (createUserAccount && !password) {
+      return res.status(400).json({
+        message: "Password is required when creating user account"
+      });
+    }
+
+    // Check if phone already exists in delivery_guys
     const phoneCheck = await pool.query(
       "SELECT delivery_guy_id FROM delivery_guys WHERE phone = $1",
       [phone]
@@ -63,23 +109,73 @@ export const createDeliveryPerson = async (req, res) => {
       return res.status(400).json({ message: "Phone number already in use" });
     }
 
-    // Create delivery person
-    const result = await pool.query(
-      `INSERT INTO delivery_guys (name, phone, address)
-       VALUES ($1, $2, $3)
-       RETURNING *`,
-      [name, phone, address || null]
-    );
+    // Check if phone already exists in users (if creating user account)
+    if (createUserAccount) {
+      const userPhoneCheck = await pool.query(
+        "SELECT user_id FROM users WHERE phone = $1",
+        [phone]
+      );
 
-    res.status(201).json({
-      message: "Delivery person created successfully",
-      deliveryPerson: result.rows[0],
-    });
+      if (userPhoneCheck.rows.length > 0) {
+        return res.status(400).json({
+          message: "Phone number already exists as a user account"
+        });
+      }
+    }
+
+    // Start transaction
+    await pool.query('BEGIN');
+
+    try {
+      // Create delivery person
+      const deliveryPersonResult = await pool.query(
+        `INSERT INTO delivery_guys (name, phone, address)
+         VALUES ($1, $2, $3)
+         RETURNING *`,
+        [name, phone, address || null]
+      );
+
+      const deliveryPerson = deliveryPersonResult.rows[0];
+      let userAccount = null;
+
+      // Create user account if requested
+      if (createUserAccount) {
+        const hashedPassword = await bcrypt.hash(password, 10);
+
+        const userResult = await pool.query(
+          `INSERT INTO users (phone, password, role, delivery_guy_id)
+           VALUES ($1, $2, $3, $4)
+           RETURNING user_id, phone, role, delivery_guy_id, created_at`,
+          [phone, hashedPassword, 'delivery_guy', deliveryPerson.delivery_guy_id]
+        );
+
+        userAccount = userResult.rows[0];
+      }
+
+      // Commit transaction
+      await pool.query('COMMIT');
+
+      res.status(201).json({
+        message: createUserAccount
+          ? "Delivery person and user account created successfully"
+          : "Delivery person created successfully",
+        deliveryPerson,
+        userAccount,
+        hasUserAccount: createUserAccount
+      });
+
+    } catch (transactionError) {
+      // Rollback transaction on error
+      await pool.query('ROLLBACK');
+      throw transactionError;
+    }
+
   } catch (error) {
     console.error("Create delivery person error:", error);
     res.status(500).json({ message: "Server error" });
   }
 };
+
 
 export const updateDeliveryPerson = async (req, res) => {
   try {
