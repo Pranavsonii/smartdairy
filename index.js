@@ -53,7 +53,7 @@ app.use("/api/map", mapRoutes);
 app.use("/api/utils", utilsRoutes);
 
 // Start server
-const PORT = config.port || 3000;
+const PORT = config.port || 3005;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });

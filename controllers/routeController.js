@@ -240,10 +240,19 @@ export const addCustomersToRoute = async (req, res) => {
     const skippedCustomers = [];
 
     for (const customer_id of customer_ids) {
+      console.log(`Adding customer ${customer_id} to route ${id}`);
+
       try {
+        // Get the next position for this route
+        const positionResult = await pool.query(
+          "SELECT COALESCE(MAX(position), 0) + 1 as next_position FROM route_customers WHERE route_id = $1",
+          [id]
+        );
+        const position = positionResult.rows[0].next_position;
+
         const result = await pool.query(
-          "INSERT INTO route_customers (route_id, customer_id) VALUES ($1, $2) RETURNING *",
-          [id, customer_id]
+          "INSERT INTO route_customers (route_id, customer_id, position) VALUES ($1, $2, $3) RETURNING *",
+          [id, customer_id, position]
         );
         addedCustomers.push(result.rows[0]);
       } catch (err) {

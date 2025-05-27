@@ -8,7 +8,7 @@ export const getDrives = async (req, res) => {
       status,
       date,
       delivery_guy_id,
-      route_id,
+      route_id
     } = req.query;
     const offset = (page - 1) * limit;
 
@@ -88,8 +88,8 @@ export const getDrives = async (req, res) => {
         page: parseInt(page),
         limit: parseInt(limit),
         totalCount,
-        totalPages: Math.ceil(totalCount / limit),
-      },
+        totalPages: Math.ceil(totalCount / limit)
+      }
     });
   } catch (error) {
     console.error("Get drives error:", error);
@@ -123,7 +123,14 @@ export const getDriveById = async (req, res) => {
 
 export const createDrive = async (req, res) => {
   try {
-    const { route_id, delivery_guy_id, stock, remarks,drive_name, start_time } = req.body;
+    const {
+      route_id,
+      delivery_guy_id,
+      stock,
+      remarks,
+      drive_name,
+      start_time
+    } = req.body;
 
     // Basic validation
     if (!route_id || !stock) {
@@ -156,15 +163,21 @@ export const createDrive = async (req, res) => {
 
     // Create drive
     const result = await pool.query(
-      `INSERT INTO drives (route_id, delivery_guy_id, stock, remarks, status)
-       VALUES ($1, $2, $3, $4, 'pending')
+      `INSERT INTO drives (route_id, delivery_guy_id, stock, remarks, status,name)
+       VALUES ($1, $2, $3, $4, 'pending' , $5)
        RETURNING *`,
-      [route_id, delivery_guy_id || null, stock, remarks || null]
+      [
+        route_id,
+        delivery_guy_id || null,
+        stock,
+        remarks || null,
+        drive_name || null
+      ]
     );
 
     res.status(201).json({
       message: "Drive created successfully",
-      drive: result.rows[0],
+      drive: result.rows[0]
     });
   } catch (error) {
     console.error("Create drive error:", error);
@@ -175,8 +188,16 @@ export const createDrive = async (req, res) => {
 export const updateDrive = async (req, res) => {
   try {
     const { id } = req.params;
-    const { route_id, delivery_guy_id, stock, sold, returned, remarks, status } =
-      req.body;
+    const {
+      route_id,
+      delivery_guy_id,
+      stock,
+      sold,
+      returned,
+      remarks,
+      status,
+      drive_name
+    } = req.body;
 
     // Check if drive exists
     const driveCheck = await pool.query(
@@ -194,7 +215,7 @@ export const updateDrive = async (req, res) => {
     if (currentDrive.status !== "pending" && (route_id || stock)) {
       return res.status(400).json({
         message:
-          "Cannot modify route or stock for a drive that has already started",
+          "Cannot modify route or stock for a drive that has already started"
       });
     }
 
@@ -260,6 +281,11 @@ export const updateDrive = async (req, res) => {
       values.push(status);
     }
 
+    if (drive_name) {
+      updates.push(`name = $${paramCounter++}`);
+      values.push(drive_name);
+    }
+
     updates.push(`updated_at = $${paramCounter++}`);
     values.push(new Date());
 
@@ -283,7 +309,7 @@ export const updateDrive = async (req, res) => {
 
     res.json({
       message: "Drive updated successfully",
-      drive: result.rows[0],
+      drive: result.rows[0]
     });
   } catch (error) {
     console.error("Update drive error:", error);
@@ -309,7 +335,7 @@ export const deleteDrive = async (req, res) => {
     if (driveCheck.rows[0].status !== "pending") {
       return res.status(400).json({
         message:
-          "Only pending drives can be deleted. Completed or ongoing drives cannot be deleted.",
+          "Only pending drives can be deleted. Completed or ongoing drives cannot be deleted."
       });
     }
 
@@ -358,7 +384,7 @@ export const getDriveDetails = async (req, res) => {
     res.json({
       drive,
       customers: customersResult.rows,
-      customerCount: customersResult.rows.length,
+      customerCount: customersResult.rows.length
     });
   } catch (error) {
     console.error("Get drive details error:", error);
@@ -391,7 +417,7 @@ export const assignDeliveryPersonToDrive = async (req, res) => {
     if (driveCheck.rows[0].status !== "pending") {
       return res.status(400).json({
         message:
-          "Cannot assign delivery person to a drive that has already started or completed",
+          "Cannot assign delivery person to a drive that has already started or completed"
       });
     }
 
@@ -416,7 +442,7 @@ export const assignDeliveryPersonToDrive = async (req, res) => {
 
     res.json({
       message: "Delivery person assigned to drive successfully",
-      drive: result.rows[0],
+      drive: result.rows[0]
     });
   } catch (error) {
     console.error("Assign delivery person error:", error);
@@ -447,11 +473,9 @@ export const startDrive = async (req, res) => {
 
     // Check if delivery guy is assigned
     if (!driveCheck.rows[0].delivery_guy_id) {
-      return res
-        .status(400)
-        .json({
-          message: "Cannot start drive without assigned delivery person",
-        });
+      return res.status(400).json({
+        message: "Cannot start drive without assigned delivery person"
+      });
     }
 
     // Start drive
@@ -465,7 +489,7 @@ export const startDrive = async (req, res) => {
 
     res.json({
       message: "Drive started successfully",
-      drive: result.rows[0],
+      drive: result.rows[0]
     });
   } catch (error) {
     console.error("Start drive error:", error);
@@ -515,7 +539,7 @@ export const endDrive = async (req, res) => {
 
     res.json({
       message: "Drive ended successfully",
-      drive: result.rows[0],
+      drive: result.rows[0]
     });
   } catch (error) {
     console.error("End drive error:", error);
@@ -551,7 +575,7 @@ export const getDriveLocations = async (req, res) => {
 
     res.json({
       drive_id: parseInt(id),
-      locations: result.rows,
+      locations: result.rows
     });
   } catch (error) {
     console.error("Get drive locations error:", error);
@@ -599,7 +623,7 @@ export const logDriveLocation = async (req, res) => {
 
     res.status(201).json({
       message: "Location logged successfully",
-      location: result.rows[0],
+      location: result.rows[0]
     });
   } catch (error) {
     console.error("Log drive location error:", error);
@@ -656,12 +680,12 @@ export const getDriveSummary = async (req, res) => {
               salesResult.rows[0].totalcustomers) *
             100
           : 0,
-      returnRate: drive.stock > 0 ? (drive.returned / drive.stock) * 100 : 0,
+      returnRate: drive.stock > 0 ? (drive.returned / drive.stock) * 100 : 0
     };
 
     res.json({
       drive,
-      summary,
+      summary
     });
   } catch (error) {
     console.error("Get drive summary error:", error);
@@ -706,14 +730,14 @@ export const getDriveManifest = async (req, res) => {
         date: drive.created_at,
         route_name: drive.routename,
         deliveryPerson: drive.deliveryguyname,
-        stock: drive.stock,
+        stock: drive.stock
       },
       customers: customersResult.rows,
       customerCount: customersResult.rows.length,
       totalExpectedQuantity: customersResult.rows.reduce(
         (sum, customer) => sum + customer.defaultquantity,
         0
-      ),
+      )
     });
   } catch (error) {
     console.error("Get drive manifest error:", error);

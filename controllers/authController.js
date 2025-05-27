@@ -6,6 +6,8 @@ import bcrypt from "bcrypt";
 import crypto from "crypto";
 
 export const login = async (req, res) => {
+  console.log("login called with body:", req.body);
+
   try {
     const { phone, password } = req.body;
 
@@ -24,9 +26,6 @@ export const login = async (req, res) => {
     // If using bcrypt (recommended):
     const isMatch = await bcrypt.compare(password, user.password);
 
-    // If you need to use crypto (replace line 32):
-    // const hashedPassword = crypto.createHash('sha256').update(password).digest('hex');
-    // const isMatch = hashedPassword === user.password;
 
     if (!isMatch) {
       return res.status(401).json({ message: "Invalid credentials" });
@@ -41,13 +40,24 @@ export const login = async (req, res) => {
       { expiresIn: config.jwt.expiresIn }
     );
 
+
+    // fetch outlet data for the user
+    const outletResult = await pool.query(
+      "SELECT * FROM outlets WHERE outlet_id = $1",
+      [user.outlet_id]
+    );
+
+    const outlets = outletResult.rows;
+    console.log(outlets);
+
     res.json({
       token,
       user: {
         user_id: user.user_id,
         phone: user.phone,
-        role: user.role,
+        role: user.role
       },
+      outlet: outlets
     });
   } catch (error) {
     console.error("Login error:", error);
@@ -85,7 +95,7 @@ export const resetPassword = async (req, res) => {
     // 3. Send it via SMS
 
     res.json({
-      message: "Password reset instructions sent",
+      message: "Password reset instructions sent"
     });
   } catch (error) {
     console.error("Password reset error:", error);
@@ -95,7 +105,6 @@ export const resetPassword = async (req, res) => {
 
 export const getProfile = async (req, res) => {
   try {
-
     const user_id = req.user.user_id;
 
     console.log("User ID from token:", req.user);
@@ -117,8 +126,8 @@ export const getProfile = async (req, res) => {
       user: {
         user_id: user.user_id,
         phone: user.phone,
-        role: user.role,
-      },
+        role: user.role
+      }
     });
   } catch (error) {
     console.error("Get profile error:", error);
