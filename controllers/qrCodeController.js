@@ -74,14 +74,14 @@ export const getQrCodes = async (req, res) => {
 
 export const getQrCodeById = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { code } = req.params;
 
     const result = await pool.query(
       `SELECT q.*, c.name as customerName, c.phone as customerPhone
        FROM qr_codes q
        LEFT JOIN customers c ON q.customer_id = c.customer_id
-       WHERE q.qr_id = $1`,
-      [id]
+       WHERE q.code = $1`,
+      [code]
     );
 
     if (result.rows.length === 0) {

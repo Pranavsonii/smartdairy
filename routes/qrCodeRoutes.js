@@ -14,7 +14,7 @@ const router = express.Router();
 
 router.get("/", authenticate, getQrCodes);
 router.get("/download", authenticate, authorize(["admin"]), downloadQrCodes);
-router.get("/:id", authenticate, getQrCodeById);
+router.get("/:code", authenticate, getQrCodeById);
 router.post("/generate", authenticate, authorize(["admin"]), generateQrCodes);
 router.post(
   "/:code/assign",

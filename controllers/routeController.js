@@ -74,12 +74,6 @@ export const createRoute = async (req, res) => {
     if (!description) {
       return res.status(400).json({ message: "Route description is required" });
     }
-    // // Check if customer_ids is an array
-    // if (!Array.isArray(customer_ids)) {
-    //   return res.status(400).json({
-    //     message: "Customer IDs should be an array"
-    //   });
-    // }
 
     // Check if route with same name already exists
     const checkResult = await pool.query(
@@ -95,7 +89,7 @@ export const createRoute = async (req, res) => {
 
     // Insert route with name and description
     const insertQuery = route
-      ? "INSERT INTO routes (name, description, route_data) VALUES ($1, $2, $3) RETURNING *"
+      ? "INSERT INTO routes (name, description, route) VALUES ($1, $2, $3) RETURNING *"
       : "INSERT INTO routes (name, description) VALUES ($1, $2) RETURNING *";
 
     const insertParams = route
@@ -113,8 +107,62 @@ export const createRoute = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
-
 export const updateRoute = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, description, route } = req.body;
+
+    if (!name) {
+      return res.status(400).json({ message: "Route name is required" });
+    }
+    // Check if description is provided
+    if (!description) {
+      return res.status(400).json({ message: "Route description is required" });
+    }
+
+    // Check if route exists
+    const checkResult = await pool.query(
+      "SELECT route_id FROM routes WHERE route_id = $1",
+      [id]
+    );
+
+    if (checkResult.rows.length === 0) {
+      return res.status(404).json({ message: "Route not found" });
+    }
+
+    // Check if another route with the same name exists
+    const nameCheckResult = await pool.query(
+      "SELECT route_id FROM routes WHERE name = $1 AND route_id != $2",
+      [name, id]
+    );
+
+    if (nameCheckResult.rows.length > 0) {
+      return res
+        .status(400)
+        .json({ message: "Another route with this name already exists" });
+    }
+
+    // Update route with name, description, and optionally route
+    const updateQuery = route
+      ? "UPDATE routes SET name = $1, description = $2, route = $3, updated_at = NOW() WHERE route_id = $4 RETURNING *"
+      : "UPDATE routes SET name = $1, description = $2, updated_at = NOW() WHERE route_id = $3 RETURNING *";
+
+    const updateParams = route
+      ? [name, description, JSON.stringify(route), id]
+      : [name, description, id];
+
+    const result = await pool.query(updateQuery, updateParams);
+
+    res.json({
+      message: "Route updated successfully",
+      route: result.rows[0]
+    });
+  } catch (error) {
+    console.error("Update route error:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+/* export const updateRoute = async (req, res) => {
   try {
     const { id } = req.params;
     const { name } = req.body;
@@ -158,7 +206,7 @@ export const updateRoute = async (req, res) => {
     console.error("Update route error:", error);
     res.status(500).json({ message: "Server error" });
   }
-};
+}; */
 
 
 export const deleteRoute = async (req, res) => {

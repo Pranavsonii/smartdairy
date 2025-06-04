@@ -13,7 +13,7 @@ export const login = async (req, res) => {
 
     // Check if user exists
     const userResult = await pool.query(
-      "SELECT user_id, phone, password, role FROM users WHERE phone = $1",
+      "SELECT user_id, phone, password, role, outlet_id FROM users WHERE phone = $1",
       [phone]
     );
 
