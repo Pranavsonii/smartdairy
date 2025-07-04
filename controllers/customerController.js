@@ -121,17 +121,19 @@ export const getCustomerById = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
-
 export const createCustomer = async (req, res) => {
   try {
-    const { name, location, phone, address, price, default_quantity } =
+    const { name, location, phone, address, stop_loss, default_quantity } =
       req.body;
 
     // Basic validation
-    if (!name || !phone || !price) {
-      return res
-        .status(400)
-        .json({ message: "Name, phone, and price are required" });
+    if (!name || !phone) {
+      // Clean up uploaded file if validation fails
+      if (req.file) {
+        fs.unlinkSync(req.file.path);
+      }
+
+      return res.status(400).json({ message: "Name, phone are required" });
     }
 
     // Check if phone already exists
@@ -141,19 +143,49 @@ export const createCustomer = async (req, res) => {
     );
 
     if (checkResult.rows.length > 0) {
-      return res.status(400).json({ message: "Phone number already in use" });
+      // Clean up uploaded file if customer already exists
+      if (req.file) {
+        fs.unlinkSync(req.file.path);
+      }
+      return res
+        .status(400)
+        .json({ message: "Customer with this phone number already exists" });
+    }
+
+    // Handle photo upload
+    let photoPath = null;
+    if (req.file) {
+      // Store relative path for database
+      photoPath = req.file.path.replace(/\\/g, "/"); // Normalize path separators
     }
 
     const result = await pool.query(
-      `INSERT INTO customers (name, location, phone, address, price, default_quantity)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO customers (name, location, phone, address, stop_loss, default_quantity, photo)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
-      [name, location, phone, address, price, default_quantity || 1]
+      [
+        name,
+        location,
+        phone,
+        address,
+        stop_loss,
+        default_quantity || 1,
+        photoPath
+      ]
     );
+
+    const customer = result.rows[0];
+
+    // Add full photo URL to response
+    if (customer.photo) {
+      customer.photo_url = `${req.protocol}://${req.get("host")}/${
+        customer.photo
+      }`;
+    }
 
     res.status(201).json({
       message: "Customer created successfully",
-      customer: result.rows[0]
+      customer: customer
     });
   } catch (error) {
     console.error("Create customer error:", error);
@@ -164,8 +196,15 @@ export const createCustomer = async (req, res) => {
 export const updateCustomer = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, location, phone, address, price, default_quantity, status } =
-      req.body;
+    const {
+      name,
+      location,
+      phone,
+      address,
+      stop_loss,
+      default_quantity,
+      status
+    } = req.body;
 
     // Check if customer exists
     const checkResult = await pool.query(
@@ -174,6 +213,10 @@ export const updateCustomer = async (req, res) => {
     );
 
     if (checkResult.rows.length === 0) {
+      if (req.file) {
+        fs.unlinkSync(req.file.path);
+      }
+
       return res.status(404).json({ message: "Customer not found" });
     }
 
@@ -187,6 +230,23 @@ export const updateCustomer = async (req, res) => {
       if (phoneCheckResult.rows.length > 0) {
         return res.status(400).json({ message: "Phone number already in use" });
       }
+    }
+
+    // Handle photo update
+    let photoPath = checkResult.rows[0].photo; // Keep existing photo by default
+
+    if (req.file) {
+      // Delete old photo if it exists
+      if (checkResult.rows[0].photo) {
+        try {
+          fs.unlinkSync(existingCustomer.rows[0].photo);
+        } catch (error) {
+          console.log("Old photo file not found or already deleted");
+        }
+      }
+
+      // Set new photo path
+      photoPath = req.file.path.replace(/\\/g, "/");
     }
 
     // Build update query dynamically
@@ -214,9 +274,9 @@ export const updateCustomer = async (req, res) => {
       values.push(address);
     }
 
-    if (price !== undefined) {
-      updates.push(`price = $${paramCounter++}`);
-      values.push(price);
+    if (stop_loss !== undefined) {
+      updates.push(`stop_loss = $${paramCounter++}`);
+      values.push(stop_loss);
     }
 
     if (default_quantity !== undefined) {
@@ -227,6 +287,11 @@ export const updateCustomer = async (req, res) => {
     if (status) {
       updates.push(`status = $${paramCounter++}`);
       values.push(status);
+    }
+
+    if (photoPath) {
+      updates.push(`photo = $${paramCounter++}`);
+      values.push(photoPath);
     }
 
     updates.push(`updated_at = $${paramCounter++}`);
@@ -250,12 +315,30 @@ export const updateCustomer = async (req, res) => {
       values
     );
 
+    const customer = result.rows[0];
+
+    // Add full photo URL to response
+    if (customer.photo) {
+      customer.photo_url = `${req.protocol}://${req.get("host")}/${
+        customer.photo
+      }`;
+    }
+
     res.json({
       message: "Customer updated successfully",
-      customer: result.rows[0]
+      customer: customer
     });
   } catch (error) {
     console.error("Update customer error:", error);
+
+    if (req.file) {
+      try {
+        fs.unlinkSync(req.file.path);
+      } catch (unlinkError) {
+        console.error("Error deleting uploaded file:", unlinkError);
+      }
+    }
+
     res.status(500).json({ message: "Server error" });
   }
 };
@@ -309,13 +392,13 @@ export const addCustomerPoints = async (req, res) => {
     const { id } = req.params;
     const { points } = req.body;
 
-    if (!points || points <= 0) {
+    if (!points) {
       return res
         .status(400)
         .json({ message: "Valid points value is required" });
     }
 
-    const result = await pool.query(
+    /*   const result = await pool.query(
       "UPDATE customers SET points = points + $1 WHERE customer_id = $2 RETURNING customer_id, points",
       [points, id]
     );
@@ -328,6 +411,67 @@ export const addCustomerPoints = async (req, res) => {
       message: "Points added successfully",
       points: result.rows[0].points
     });
+    */
+
+    // Get current points
+    const checkResult = await pool.query(
+      "SELECT points FROM customers WHERE customer_id = $1",
+      [id]
+    );
+
+    if (checkResult.rows.length === 0) {
+      return res.status(404).json({ message: "Customer not found" });
+    }
+
+    const currentPoints = checkResult.rows[0].points;
+
+    // Start transaction
+    const client = await pool.connect();
+
+    try {
+      await client.query("BEGIN");
+
+      // Update customer points
+      const result = await client.query(
+        "UPDATE customers SET points = points + $1 WHERE customer_id = $2 RETURNING customer_id, points",
+        [points, id]
+      );
+
+      const newBalance = result.rows[0].points;
+
+      // Log the transaction
+      await client.query(
+        `INSERT INTO point_transactions
+         (customer_id, transaction_type, points, previous_balance, new_balance, reason, performed_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          id,
+          "credit",
+          points,
+          currentPoints,
+          newBalance,
+          reason || "Manual addition",
+          req.user.userId
+        ]
+      );
+
+      await client.query("COMMIT");
+
+      res.json({
+        message: "Points added successfully",
+        points: newBalance,
+        transaction: {
+          added: points,
+          previous_balance: currentPoints,
+          new_balance: newBalance
+        }
+      });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   } catch (error) {
     console.error("Add customer points error:", error);
     res.status(500).json({ message: "Server error" });
@@ -345,9 +489,9 @@ export const deductCustomerPoints = async (req, res) => {
         .json({ message: "Valid points value is required" });
     }
 
-    // Check if customer has sufficient points
+    // Check if customer has sufficient points and get stop_loss
     const checkResult = await pool.query(
-      "SELECT points FROM customers WHERE customer_id = $1",
+      "SELECT points, stop_loss FROM customers WHERE customer_id = $1",
       [id]
     );
 
@@ -356,20 +500,76 @@ export const deductCustomerPoints = async (req, res) => {
     }
 
     const currentPoints = checkResult.rows[0].points;
+    const stopLoss = checkResult.rows[0].stop_loss;
 
     if (currentPoints < points) {
       return res.status(400).json({ message: "Insufficient points" });
     }
 
+    // Check if customer has stop_loss and if current points would go below stop_loss after deduction
+    if (
+      stopLoss !== null &&
+      stopLoss !== undefined &&
+      currentPoints - points < stopLoss
+    ) {
+      return res.status(400).json({
+        message: `Cannot deduct points. Points would go below stop loss limit of ${stopLoss}`
+      });
+    }
+
+    /*  // Update points
     const result = await pool.query(
       "UPDATE customers SET points = points - $1 WHERE customer_id = $2 RETURNING customer_id, points",
       [points, id]
-    );
+    ); */
 
-    res.json({
-      message: "Points deducted successfully",
-      points: result.rows[0].points
-    });
+    // Start transaction
+    const client = await pool.connect();
+
+    try {
+      await client.query("BEGIN");
+
+      // Update customer points
+      const result = await client.query(
+        "UPDATE customers SET points = points - $1 WHERE customer_id = $2 RETURNING customer_id, points",
+        [points, id]
+      );
+
+      const newBalance = result.rows[0].points;
+
+      // Log the transaction
+      await client.query(
+        `INSERT INTO point_transactions
+         (customer_id, transaction_type, points, previous_balance, new_balance, reason, performed_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          id,
+          "debit",
+          points,
+          currentPoints,
+          newBalance,
+          reason || "Manual deduction",
+          req.user.userId
+        ]
+      );
+
+      await client.query("COMMIT");
+
+      res.json({
+        message: "Points deducted successfully",
+        points: newBalance,
+        transaction: {
+          deducted: points,
+          previous_balance: currentPoints,
+          new_balance: newBalance
+        }
+      });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   } catch (error) {
     console.error("Deduct customer points error:", error);
     res.status(500).json({ message: "Server error" });

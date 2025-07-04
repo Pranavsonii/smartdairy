@@ -449,8 +449,8 @@ export const getDriveProgress = async (req, res) => {
     // Get last location
     const lastLocationResult = await pool.query(
       `SELECT
-        ST_X(location::geometry) as longitude,
-        ST_Y(location::geometry) as latitude,
+        longitude,
+        latitude,
         time
        FROM drive_locations_log
        WHERE drive_id = $1

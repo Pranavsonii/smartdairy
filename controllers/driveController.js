@@ -564,8 +564,8 @@ export const getDriveLocations = async (req, res) => {
     // Get location logs
     const result = await pool.query(
       `SELECT drive_location_id,
-              ST_X(location::geometry) as longitude,
-              ST_Y(location::geometry) as latitude,
+              longitude,
+              latitude,
               time
        FROM drive_locations_log
        WHERE drive_id = $1
@@ -584,6 +584,8 @@ export const getDriveLocations = async (req, res) => {
 };
 
 export const logDriveLocation = async (req, res) => {
+console.log(req)
+
   try {
     const { id } = req.params;
     const { latitude, longitude } = req.body;
@@ -612,11 +614,11 @@ export const logDriveLocation = async (req, res) => {
 
     // Log location
     const result = await pool.query(
-      `INSERT INTO drive_locations_log (drive_id, location, time)
-       VALUES ($1, ST_MakePoint($2, $3), NOW())
+      `INSERT INTO drive_locations_log (drive_id,  longitude, latitude, time)
+       VALUES ($1, $2, $3, NOW())
        RETURNING drive_location_id,
-                 ST_X(location::geometry) as longitude,
-                 ST_Y(location::geometry) as latitude,
+                 longitude,
+                 latitude,
                  time`,
       [id, longitude, latitude]
     );

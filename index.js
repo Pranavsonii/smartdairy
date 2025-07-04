@@ -1,6 +1,7 @@
 import express from "express";
 import { config } from "./config/config.js";
 import { connectDB } from "./config/database.js";
+import path from "path";
 
 // Import routes
 import authRoutes from "./routes/authRoutes.js";
@@ -51,6 +52,22 @@ app.use("/api/map", mapRoutes);
 // app.use("/api/sync", syncRoutes);
 // app.use("/api/export", exportRoutes);
 app.use("/api/utils", utilsRoutes);
+
+// Serve static files from uploads directory
+app.use('/uploads', express.static('uploads'));
+
+
+// admin account creation
+app.use("/api/admin", (req, res) => {
+  // This is a placeholder for admin account creation logic
+
+
+  // In a real application, you would implement the logic to create an admin account here
+  res.status(200).json({ message: "Admin account creation endpoint" });
+});
+
+
+
 
 // Start server
 const PORT = config.port || 3005;
