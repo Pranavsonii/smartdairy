@@ -9,7 +9,8 @@ import {
   addCustomerPoints,
   deductCustomerPoints,
   getCustomerPaymentLogs,
-  getCustomerRoutes
+  getCustomerRoutes,
+  getCustomerTransactions
 } from "../controllers/customerController.js";
 import {
   uploadCustomerPhoto,
@@ -18,6 +19,8 @@ import {
 import { authenticate, authorize } from "../middlewares/authMiddleware.js";
 
 const router = express.Router();
+
+router.get("/transactions", authenticate, getCustomerTransactions);
 
 router.get("/", authenticate, getCustomers);
 router.get("/:id", authenticate, getCustomerById);

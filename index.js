@@ -54,7 +54,9 @@ app.use("/api/map", mapRoutes);
 app.use("/api/utils", utilsRoutes);
 
 // Serve static files from uploads directory
-app.use('/uploads', express.static('uploads'));
+app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+app.use('/public', express.static(path.join(process.cwd(), 'public')));
+app.use('/public/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
 
 // admin account creation

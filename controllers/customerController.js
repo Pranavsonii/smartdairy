@@ -45,6 +45,10 @@ export const getCustomers = async (req, res) => {
 
     const result = await pool.query(query, params);
 
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "No customers found" });
+    }
+
     // Get total count for pagination
     const countResult = await pool.query(
       `SELECT COUNT(*) FROM customers WHERE 1=1${
@@ -63,13 +67,27 @@ export const getCustomers = async (req, res) => {
 
     const totalCount = parseInt(countResult.rows[0].count);
 
-    // Fetch QR data for each customer
+    // Fetch Extra data for each customer like: QR, photo URL, transactions
     const customers = await Promise.all(
       result.rows.map(async (customer) => {
         const qrResult = await pool.query(
           "SELECT * FROM qr_codes WHERE customer_id = $1",
           [customer.customer_id]
         );
+
+        // Add full photo URL if exists
+        if (customer.photo) {
+          customer.photo_url = `${req.protocol}://${req.get("host")}/${
+            customer.photo
+          }`;
+        }
+
+        // Fetch transactions for this customer
+        const transactionResult = await pool.query(
+          "SELECT * FROM point_transactions WHERE customer_id = $1 ORDER BY created_at DESC",
+          [customer.customer_id]
+        );
+        customer.transactions = transactionResult.rows;
 
         return {
           ...customer,
@@ -114,6 +132,19 @@ export const getCustomerById = async (req, res) => {
     const qrCode = qrResult.rows.length > 0 ? qrResult.rows[0] : null;
     const customer = result.rows[0];
     customer.qr = qrCode;
+    // Add full photo URL if exists
+    if (customer.photo) {
+      customer.photo_url = `${req.protocol}://${req.get("host")}/${
+        customer.photo
+      }`;
+    }
+
+    // Add transaction logs
+    const transactionResult = await pool.query(
+      "SELECT * FROM point_transactions WHERE customer_id = $1 ORDER BY created_at DESC",
+      [id]
+    );
+    customer.transactions = transactionResult.rows;
 
     res.json({ customer: customer });
   } catch (error) {
@@ -442,17 +473,9 @@ export const addCustomerPoints = async (req, res) => {
       // Log the transaction
       await client.query(
         `INSERT INTO point_transactions
-         (customer_id, transaction_type, points, previous_balance, new_balance, reason, performed_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [
-          id,
-          "credit",
-          points,
-          currentPoints,
-          newBalance,
-          reason || "Manual addition",
-          req.user.userId
-        ]
+         (customer_id, transaction_type, points, previous_balance, new_balance, performed_by)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [id, "credit", points, currentPoints, newBalance, req.user.user_id]
       );
 
       await client.query("COMMIT");
@@ -499,18 +522,14 @@ export const deductCustomerPoints = async (req, res) => {
       return res.status(404).json({ message: "Customer not found" });
     }
 
-    const currentPoints = checkResult.rows[0].points;
-    const stopLoss = checkResult.rows[0].stop_loss;
-
-    if (currentPoints < points) {
-      return res.status(400).json({ message: "Insufficient points" });
-    }
+    const currentPoints = parseInt(checkResult.rows[0].points);
+    const stopLoss = parseInt(checkResult.rows[0].stop_loss);
 
     // Check if customer has stop_loss and if current points would go below stop_loss after deduction
     if (
       stopLoss !== null &&
       stopLoss !== undefined &&
-      currentPoints - points < stopLoss
+      currentPoints - points > stopLoss
     ) {
       return res.status(400).json({
         message: `Cannot deduct points. Points would go below stop loss limit of ${stopLoss}`
@@ -522,6 +541,8 @@ export const deductCustomerPoints = async (req, res) => {
       "UPDATE customers SET points = points - $1 WHERE customer_id = $2 RETURNING customer_id, points",
       [points, id]
     ); */
+
+    console.log(req.user);
 
     // Start transaction
     const client = await pool.connect();
@@ -540,16 +561,16 @@ export const deductCustomerPoints = async (req, res) => {
       // Log the transaction
       await client.query(
         `INSERT INTO point_transactions
-         (customer_id, transaction_type, points, previous_balance, new_balance, reason, performed_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+         (customer_id, transaction_type, points, previous_balance, new_balance, performed_by)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
         [
           id,
           "debit",
           points,
           currentPoints,
           newBalance,
-          reason || "Manual deduction",
-          req.user.userId
+          // reason || "Manual deduction",
+          req.user.user_id
         ]
       );
 
@@ -674,6 +695,58 @@ export const getCustomerRoutes = async (req, res) => {
     });
   } catch (error) {
     console.error("Get customer routes error:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+// All Transaction Combined
+export const getCustomerTransactions = async (req, res) => {
+  try {
+    // const { id } = req.params;
+
+    // Check if customer exists
+    // const checkResult = await pool.query("SELECT customer_id FROM customers");
+
+    // if (checkResult.rows.length === 0) {
+    //   return res.status(404).json({ message: "Customer not found" });
+    // }
+
+    // Get pagination parameters
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
+
+    // Query to get all transactions for this customer
+    const result = await pool.query(
+      `SELECT pt.*, c.name AS customer_name, c.phone AS customer_phone
+       FROM point_transactions pt
+       JOIN customers c ON pt.customer_id = c.customer_id
+       ORDER BY pt.created_at DESC
+       LIMIT $1 OFFSET $2`,
+      [limit, offset]
+    );
+
+    console.log("Transactions Result:", result.rows);
+
+
+    // Get total count for pagination
+    const countResult = await pool.query(
+      `SELECT COUNT(*) FROM point_transactions`
+    );
+
+    const totalCount = parseInt(countResult.rows[0].count);
+
+    res.json({
+      transactions: result.rows,
+      pagination: {
+        page,
+        limit,
+        totalCount,
+        totalPages: Math.ceil(totalCount / limit)
+      }
+    });
+  } catch (error) {
+    console.error("Get customer transactions error:", error);
     res.status(500).json({ message: "Server error" });
   }
 };
