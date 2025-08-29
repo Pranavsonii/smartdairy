@@ -4,7 +4,7 @@ export const getCustomers = async (req, res) => {
   try {
     // Get pagination parameters from query
     const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
+    const limit = parseInt(req.query.limit) || 500;
     const offset = (page - 1) * limit;
 
     // Get filter parameters
@@ -374,13 +374,39 @@ export const updateCustomer = async (req, res) => {
   }
 };
 
+// export const deleteCustomer = async (req, res) => {
+//   try {
+//     const { id } = req.params;
+
+//     // Check if customer exists
+//     const checkResult = await pool.query(
+//       "SELECT customer_id FROM customers WHERE customer_id = $1",
+//       [id]
+//     );
+
+//     if (checkResult.rows.length === 0) {
+//       return res.status(404).json({ message: "Customer not found" });
+//     }
+
+//     // Delete customer
+//     await pool.query("DELETE FROM customers WHERE customer_id = $1", [id]);
+
+//     res.json({ message: "Customer deleted successfully" });
+//   } catch (error) {
+//     console.error("Delete customer error:", error);
+//     res.status(500).json({ message: "Server error" });
+//   }
+// };
+
+
 export const deleteCustomer = async (req, res) => {
   try {
     const { id } = req.params;
+    const { force = false } = req.query; // Use ?force=true to enable cascade deletion
 
     // Check if customer exists
     const checkResult = await pool.query(
-      "SELECT customer_id FROM customers WHERE customer_id = $1",
+      "SELECT customer_id, name, photo FROM customers WHERE customer_id = $1",
       [id]
     );
 
@@ -388,12 +414,158 @@ export const deleteCustomer = async (req, res) => {
       return res.status(404).json({ message: "Customer not found" });
     }
 
-    // Delete customer
-    await pool.query("DELETE FROM customers WHERE customer_id = $1", [id]);
+    const customer = checkResult.rows[0];
 
-    res.json({ message: "Customer deleted successfully" });
+    // Check all foreign key relationships
+    const [qrCodesCheck, routesCheck, salesCheck, paymentsCheck, transactionsCheck] = await Promise.all([
+      pool.query("SELECT COUNT(*) as count FROM qr_codes WHERE customer_id = $1", [id]),
+      pool.query("SELECT COUNT(*) as count FROM route_customers WHERE customer_id = $1", [id]),
+      pool.query("SELECT COUNT(*) as count FROM drive_customers_sales WHERE customer_id = $1", [id]),
+      pool.query("SELECT COUNT(*) as count FROM payment_logs WHERE customer_id = $1", [id]),
+      pool.query("SELECT COUNT(*) as count FROM point_transactions WHERE customer_id = $1", [id])
+    ]);
+
+    const associatedRecords = {
+      qrCodes: parseInt(qrCodesCheck.rows[0].count),
+      routes: parseInt(routesCheck.rows[0].count),
+      sales: parseInt(salesCheck.rows[0].count),
+      payments: parseInt(paymentsCheck.rows[0].count),
+      transactions: parseInt(transactionsCheck.rows[0].count)
+    };
+
+    const totalAssociatedRecords = Object.values(associatedRecords).reduce((sum, count) => sum + count, 0);
+
+    // If no associated records, proceed with simple deletion
+    if (totalAssociatedRecords === 0) {
+      // Delete photo file if exists
+      if (customer.photo) {
+        try {
+          const fs = await import('fs');
+          fs.unlinkSync(customer.photo);
+        } catch (error) {
+          console.log("Photo file not found or already deleted");
+        }
+      }
+
+      await pool.query("DELETE FROM customers WHERE customer_id = $1", [id]);
+
+      return res.json({
+        message: "Customer deleted successfully",
+        deletedCustomer: {
+          customer_id: customer.customer_id,
+          name: customer.name
+        }
+      });
+    }
+
+    // If has associated records but force is false, show warning
+    if (!force) {
+      return res.status(400).json({
+        message: "Customer has associated records. Use ?force=true to delete all associated data.",
+        customer: {
+          customer_id: customer.customer_id,
+          name: customer.name
+        },
+        associatedRecords: associatedRecords,
+        totalAssociatedRecords: totalAssociatedRecords,
+        warning: "Using force=true will permanently delete all associated data including QR codes, routes, sales history, payments, and point transactions!",
+        deletionUrl: `${req.originalUrl}?force=true`
+      });
+    }
+
+    // Force deletion with cascade - use transaction for data integrity
+    const client = await pool.connect();
+
+    try {
+      await client.query('BEGIN');
+
+      console.log(`Starting cascade deletion for customer ${id} (${customer.name})`);
+
+      // Delete in correct order (children first, then parent)
+      // 1. Delete point transactions
+      if (associatedRecords.transactions > 0) {
+        await client.query("DELETE FROM point_transactions WHERE customer_id = $1", [id]);
+        console.log(`Deleted ${associatedRecords.transactions} point transactions`);
+      }
+
+      // 2. Delete QR codes
+      if (associatedRecords.qrCodes > 0) {
+        await client.query("DELETE FROM qr_codes WHERE customer_id = $1", [id]);
+        console.log(`Deleted ${associatedRecords.qrCodes} QR codes`);
+      }
+
+      // 3. Delete route associations
+      if (associatedRecords.routes > 0) {
+        await client.query("DELETE FROM route_customers WHERE customer_id = $1", [id]);
+        console.log(`Deleted ${associatedRecords.routes} route associations`);
+      }
+
+      // 4. Delete sales records
+      if (associatedRecords.sales > 0) {
+        await client.query("DELETE FROM drive_customers_sales WHERE customer_id = $1", [id]);
+        console.log(`Deleted ${associatedRecords.sales} sales records`);
+      }
+
+      // 5. Delete payment logs
+      if (associatedRecords.payments > 0) {
+        await client.query("DELETE FROM payment_logs WHERE customer_id = $1", [id]);
+        console.log(`Deleted ${associatedRecords.payments} payment logs`);
+      }
+
+      // 6. Finally delete the customer
+      await client.query("DELETE FROM customers WHERE customer_id = $1", [id]);
+      console.log(`Deleted customer ${customer.name}`);
+
+      await client.query('COMMIT');
+
+      // Delete photo file after successful database deletion
+      if (customer.photo) {
+        try {
+          const fs = await import('fs');
+          fs.unlinkSync(customer.photo);
+          console.log(`Deleted photo file: ${customer.photo}`);
+        } catch (error) {
+          console.log("Photo file not found or already deleted");
+        }
+      }
+
+      res.json({
+        message: "Customer and all associated records deleted successfully",
+        deletedCustomer: {
+          customer_id: customer.customer_id,
+          name: customer.name
+        },
+        deletedRecords: {
+          ...associatedRecords,
+          photoFile: customer.photo ? true : false
+        },
+        totalRecordsDeleted: totalAssociatedRecords + 1 // +1 for the customer record
+      });
+
+    } catch (error) {
+      await client.query('ROLLBACK');
+      console.error("Cascade deletion failed:", error);
+      throw error;
+    } finally {
+      client.release();
+    }
+
   } catch (error) {
     console.error("Delete customer error:", error);
+
+    // Enhanced error handling for foreign key constraints
+    if (error.code === '23503') {
+      const detail = error.detail || '';
+      const table = error.table || 'unknown';
+
+      return res.status(400).json({
+        message: `Cannot delete customer due to foreign key constraint in table '${table}'. Use ?force=true to cascade delete all associated records.`,
+        error: "Foreign key constraint violation",
+        detail: detail,
+        solution: "Add ?force=true to your request URL to enable cascade deletion"
+      });
+    }
+
     res.status(500).json({ message: "Server error" });
   }
 };
@@ -504,13 +676,19 @@ export const addCustomerPoints = async (req, res) => {
 export const deductCustomerPoints = async (req, res) => {
   try {
     const { id } = req.params;
-    const { points } = req.body;
+    const { points, date } = req.body;
 
     if (!points || points <= 0) {
       return res
         .status(400)
         .json({ message: "Valid points value is required" });
     }
+
+    // check date format
+    // if (date && isNaN(Date.parse(date))) {
+    //   return res.status(400).json({ message: "Invalid date format" });
+    // }
+
 
     // Check if customer has sufficient points and get stop_loss
     const checkResult = await pool.query(
@@ -561,8 +739,8 @@ export const deductCustomerPoints = async (req, res) => {
       // Log the transaction
       await client.query(
         `INSERT INTO point_transactions
-         (customer_id, transaction_type, points, previous_balance, new_balance, performed_by)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
+         (customer_id, transaction_type, points, previous_balance, new_balance, date, performed_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
         [
           id,
           "debit",
@@ -570,6 +748,7 @@ export const deductCustomerPoints = async (req, res) => {
           currentPoints,
           newBalance,
           // reason || "Manual deduction",
+          date || null,
           req.user.user_id
         ]
       );
@@ -613,7 +792,7 @@ export const getCustomerPaymentLogs = async (req, res) => {
 
     // Get pagination parameters
     const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
+    const limit = parseInt(req.query.limit) || 500;
     const offset = (page - 1) * limit;
 
     const result = await pool.query(
@@ -659,7 +838,7 @@ export const getCustomerRoutes = async (req, res) => {
 
     // Get pagination parameters
     const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
+    const limit = parseInt(req.query.limit) || 500;
     const offset = (page - 1) * limit;
 
     // Query to get all routes with this customer
@@ -713,7 +892,7 @@ export const getCustomerTransactions = async (req, res) => {
 
     // Get pagination parameters
     const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
+    const limit = parseInt(req.query.limit) || 500;
     const offset = (page - 1) * limit;
 
     // Query to get all transactions for this customer
@@ -727,7 +906,6 @@ export const getCustomerTransactions = async (req, res) => {
     );
 
     console.log("Transactions Result:", result.rows);
-
 
     // Get total count for pagination
     const countResult = await pool.query(

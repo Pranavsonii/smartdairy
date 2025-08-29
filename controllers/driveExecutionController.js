@@ -28,7 +28,8 @@ export const getDriveExecution = async (req, res) => {
 
     // Get customers in the route with their delivery status
     const customersResult = await pool.query(
-      `SELECT c.customer_id, c.name, c.phone, c.location, c.address, c.price, c.default_quantity,
+      `SELECT c.customer_id, c.name, c.phone, c.location, c.address, c.default_quantity,
+              COALESCE(dcs.price, 0) as price,
               COALESCE(dcs.status, 'pending') as delivery_status,
               COALESCE(dcs.quantity, 0) as delivered_quantity,
               COALESCE(dcs.total_amount, 0) as delivered_amount

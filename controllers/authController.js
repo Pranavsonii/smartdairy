@@ -13,7 +13,8 @@ export const login = async (req, res) => {
 
     // Check if user exists
     const userResult = await pool.query(
-      "SELECT user_id, phone, password, role, outlet_id FROM users WHERE phone = $1",
+      // user_id, phone, password, role, outlet_id
+      "SELECT * FROM users WHERE phone = $1",
       [phone]
     );
 
@@ -23,9 +24,20 @@ export const login = async (req, res) => {
 
     const user = userResult.rows[0];
 
+    // if user role is delivery_guy then fetch the delivery person details
+    if (user.role === "delivery_guy") {
+      const deliveryPersonResult = await pool.query(
+        "SELECT * FROM delivery_guys WHERE delivery_guy_id = $1",
+        [user.delivery_guy_id]
+      );
+      if (deliveryPersonResult.rows.length !== 0) {
+        // return res.status(404).json({ message: "Delivery person not found" });
+        user.delivery_person = deliveryPersonResult.rows[0];
+      }
+    }
+
     // If using bcrypt (recommended):
     const isMatch = await bcrypt.compare(password, user.password);
-
 
     if (!isMatch) {
       return res.status(401).json({ message: "Invalid credentials" });
@@ -40,7 +52,6 @@ export const login = async (req, res) => {
       { expiresIn: config.jwt.expiresIn }
     );
 
-
     // fetch outlet data for the user
     const outletResult = await pool.query(
       "SELECT * FROM outlets WHERE outlet_id = $1",
@@ -50,13 +61,22 @@ export const login = async (req, res) => {
     const outlets = outletResult.rows;
     console.log(outlets);
 
-    res.json({
+    /* res.json({
       token,
       user: {
         user_id: user.user_id,
         phone: user.phone,
         role: user.role
       },
+      outlet: outlets
+    }); */
+
+    // Remove password from user object
+    const { password: _, ...userWithoutPassword } = user;
+
+    res.json({
+      token,
+      user: userWithoutPassword,
       outlet: outlets
     });
   } catch (error) {

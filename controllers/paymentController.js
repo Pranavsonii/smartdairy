@@ -4,7 +4,7 @@ export const getPayments = async (req, res) => {
   try {
     // Get pagination parameters from query
     const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
+    const limit = parseInt(req.query.limit) || 500;
     const offset = (page - 1) * limit;
 
     // Get filter parameters

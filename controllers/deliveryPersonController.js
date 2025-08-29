@@ -11,7 +11,7 @@ export const getDeliveryPersons = async (req, res) => {
     );
 
     res.json({
-      deliveryPersons: result.rows,
+      deliveryPersons: result.rows
     });
   } catch (error) {
     console.error("Get delivery persons error:", error);
@@ -37,7 +37,7 @@ export const getDeliveryPersonById = async (req, res) => {
     }
 
     res.json({
-      deliveryPerson: result.rows[0],
+      deliveryPerson: result.rows[0]
     });
   } catch (error) {
     console.error("Get delivery person by ID error:", error);
@@ -82,11 +82,15 @@ export const getDeliveryPersonById = async (req, res) => {
 //   }
 // };
 
-
-
 export const createDeliveryPerson = async (req, res) => {
   try {
-    const { name, phone, address, password, createUserAccount = true } = req.body;
+    const {
+      name,
+      phone,
+      address,
+      password,
+      createUserAccount = true
+    } = req.body;
 
     // Basic validation
     if (!name || !phone) {
@@ -124,7 +128,7 @@ export const createDeliveryPerson = async (req, res) => {
     }
 
     // Start transaction
-    await pool.query('BEGIN');
+    await pool.query("BEGIN");
 
     try {
       // Create delivery person
@@ -143,17 +147,23 @@ export const createDeliveryPerson = async (req, res) => {
         const hashedPassword = await bcrypt.hash(password, 10);
 
         const userResult = await pool.query(
-          `INSERT INTO users (phone, password, role, delivery_guy_id)
-           VALUES ($1, $2, $3, $4)
-           RETURNING user_id, phone, role, delivery_guy_id, created_at`,
-          [phone, hashedPassword, 'delivery_guy', deliveryPerson.delivery_guy_id]
+          `INSERT INTO users (phone, password, role, delivery_guy_id, outlet_id)
+           VALUES ($1, $2, $3, $4, $5)
+           RETURNING user_id, phone, role, delivery_guy_id, outlet_id, created_at`,
+          [
+            phone,
+            hashedPassword,
+            "delivery_guy",
+            deliveryPerson.delivery_guy_id,
+            req.user.outlet_id
+          ]
         );
 
         userAccount = userResult.rows[0];
       }
 
       // Commit transaction
-      await pool.query('COMMIT');
+      await pool.query("COMMIT");
 
       res.status(201).json({
         message: createUserAccount
@@ -163,19 +173,16 @@ export const createDeliveryPerson = async (req, res) => {
         userAccount,
         hasUserAccount: createUserAccount
       });
-
     } catch (transactionError) {
       // Rollback transaction on error
-      await pool.query('ROLLBACK');
+      await pool.query("ROLLBACK");
       throw transactionError;
     }
-
   } catch (error) {
     console.error("Create delivery person error:", error);
     res.status(500).json({ message: "Server error" });
   }
 };
-
 
 export const updateDeliveryPerson = async (req, res) => {
   try {
@@ -245,7 +252,7 @@ export const updateDeliveryPerson = async (req, res) => {
 
     res.json({
       message: "Delivery person updated successfully",
-      deliveryPerson: result.rows[0],
+      deliveryPerson: result.rows[0]
     });
   } catch (error) {
     console.error("Update delivery person error:", error);
@@ -276,7 +283,7 @@ export const deleteDeliveryPerson = async (req, res) => {
     if (userCheck.rows.length > 0) {
       return res.status(400).json({
         message:
-          "Cannot delete delivery person with an active user account. Delete the user account first.",
+          "Cannot delete delivery person with an active user account. Delete the user account first."
       });
     }
 
@@ -288,13 +295,13 @@ export const deleteDeliveryPerson = async (req, res) => {
 
     if (driveCheck.rows.length > 0) {
       return res.status(400).json({
-        message: "Cannot delete delivery person with associated drives.",
+        message: "Cannot delete delivery person with associated drives."
       });
     }
 
     // Delete delivery person
     await pool.query("DELETE FROM delivery_guys WHERE delivery_guy_id = $1", [
-      id,
+      id
     ]);
 
     res.json({ message: "Delivery person deleted successfully" });
@@ -307,7 +314,7 @@ export const deleteDeliveryPerson = async (req, res) => {
 export const getDeliveryPersonDrives = async (req, res) => {
   try {
     const { id } = req.params;
-    const { status, fromDate, toDate, page = 1, limit = 10 } = req.query;
+    const { status, fromDate, toDate, page = 1, limit = 500 } = req.query;
     const offset = (page - 1) * limit;
 
     // Check if delivery person exists
@@ -385,8 +392,8 @@ export const getDeliveryPersonDrives = async (req, res) => {
         page: parseInt(page),
         limit: parseInt(limit),
         totalCount,
-        totalPages: Math.ceil(totalCount / limit),
-      },
+        totalPages: Math.ceil(totalCount / limit)
+      }
     });
   } catch (error) {
     console.error("Get delivery person drives error:", error);
@@ -496,21 +503,21 @@ export const getDeliveryPersonPerformance = async (req, res) => {
           driveMetrics.totaldrives > 0
             ? (driveMetrics.completeddrives / driveMetrics.totaldrives) * 100
             : 0,
-        avgDriveHours: parseFloat(driveMetrics.avgdrivehours) || 0,
+        avgDriveHours: parseFloat(driveMetrics.avgdrivehours) || 0
       },
       salesMetrics: {
         totalUnitsSold: parseInt(salesMetrics.totalunitssold) || 0,
         totalRevenue: parseFloat(salesMetrics.totalsalesamount) || 0,
         total_customersServed: parseInt(salesMetrics.totalcustomersserved) || 0,
         deliveryEfficiency,
-        avgSalesPerDrive,
+        avgSalesPerDrive
       },
       routePerformance: routesResult.rows.map((route) => ({
         route_name: route.routename,
         driveCount: parseInt(route.drivecount),
         unitsSold: parseInt(route.unitssold) || 0,
-        revenue: parseFloat(route.revenue) || 0,
-      })),
+        revenue: parseFloat(route.revenue) || 0
+      }))
     };
 
     res.json({ performance });

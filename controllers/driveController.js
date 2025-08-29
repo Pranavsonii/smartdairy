@@ -4,7 +4,7 @@ export const getDrives = async (req, res) => {
   try {
     const {
       page = 1,
-      limit = 10,
+      limit = 500,
       status,
       date,
       delivery_guy_id,
@@ -128,7 +128,7 @@ export const createDrive = async (req, res) => {
       delivery_guy_id,
       stock,
       remarks,
-      drive_name,
+      name,
       start_time
     } = req.body;
 
@@ -171,7 +171,7 @@ export const createDrive = async (req, res) => {
         delivery_guy_id || null,
         stock,
         remarks || null,
-        drive_name || null
+        name
       ]
     );
 
@@ -196,7 +196,7 @@ export const updateDrive = async (req, res) => {
       returned,
       remarks,
       status,
-      drive_name
+      name
     } = req.body;
 
     // Check if drive exists
@@ -281,9 +281,9 @@ export const updateDrive = async (req, res) => {
       values.push(status);
     }
 
-    if (drive_name) {
+    if (name) {
       updates.push(`name = $${paramCounter++}`);
-      values.push(drive_name);
+      values.push(name);
     }
 
     updates.push(`updated_at = $${paramCounter++}`);
@@ -708,6 +708,8 @@ export const getDriveManifest = async (req, res) => {
        WHERE d.drive_id = $1`,
       [id]
     );
+console.log(1);
+
 
     if (driveResult.rows.length === 0) {
       return res.status(404).json({ message: "Drive not found" });
@@ -715,16 +717,18 @@ export const getDriveManifest = async (req, res) => {
 
     const drive = driveResult.rows[0];
 
+console.log(2);
+
     // Get customers in the route with their details
     const customersResult = await pool.query(
-      `SELECT c.customer_id, c.name, c.location, c.phone, c.address,
-              c.default_quantity, c.price
+      `SELECT *
        FROM customers c
        JOIN route_customers rc ON c.customer_id = rc.customer_id
        WHERE rc.route_id = $1 AND c.status = 'active'
        ORDER BY c.name`,
       [drive.route_id]
     );
+console.log(3);
 
     res.json({
       drive: {

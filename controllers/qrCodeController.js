@@ -5,7 +5,7 @@ import { v4 as uuidv4 } from "uuid";
 
 export const getQrCodes = async (req, res) => {
   try {
-    const { page = 1, limit = 10, status, customer_id } = req.query;
+    const { page = 1, limit = 500, status, customer_id } = req.query;
     const offset = (page - 1) * limit;
 
     let query = `
