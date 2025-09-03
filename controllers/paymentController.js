@@ -127,7 +127,7 @@ export const getPaymentById = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
-
+/*
 export const createPayment = async (req, res) => {
   try {
     const { customer_id, amount, mode, remarks, date } = req.body;
@@ -192,6 +192,122 @@ export const createPayment = async (req, res) => {
         payment: paymentResult.rows[0],
         customerPoints: customerResult.rows[0].points,
       });
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    console.error("Create payment error:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+ */
+
+
+
+export const createPayment = async (req, res) => {
+  try {
+    const { customer_id, amount, mode, remarks, date } = req.body;
+
+    // Basic validation
+    if (!customer_id || !amount || !mode) {
+      return res
+        .status(400)
+        .json({ message: "Customer ID, amount, and mode are required" });
+    }
+
+    // Check if amount is valid
+    if (amount <= 0) {
+      return res.status(400).json({ message: "Amount must be greater than 0" });
+    }
+
+    // Check if customer exists and get current points
+    const customerCheck = await pool.query(
+      "SELECT customer_id, points FROM customers WHERE customer_id = $1",
+      [customer_id]
+    );
+
+    if (customerCheck.rows.length === 0) {
+      return res.status(404).json({ message: "Customer not found" });
+    }
+
+    const previousPoints = customerCheck.rows[0].points || 0;
+    const pointsToAdd = Math.floor(amount); // Convert amount to points (1 rupee = 1 point)
+
+    // Create payment with transaction to update customer points and log transaction
+    const client = await pool.connect();
+
+    try {
+      await client.query("BEGIN");
+
+      // 1. Create payment log
+      const paymentResult = await client.query(
+        `INSERT INTO payment_logs (customer_id, amount, mode, remarks, date)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING *`,
+        [customer_id, amount, mode, remarks || null, date || new Date()]
+      );
+
+      const payment = paymentResult.rows[0];
+
+      // 2. Update customer points
+      let newPoints = previousPoints;
+      if (pointsToAdd > 0) {
+        const updatedCustomerResult = await client.query(
+          `UPDATE customers
+           SET points = points + $1, updated_at = NOW()
+           WHERE customer_id = $2
+           RETURNING points`,
+          [pointsToAdd, customer_id]
+        );
+        newPoints = updatedCustomerResult.rows[0].points;
+      }
+
+      // 3. Create point transaction record (only if points > 0)
+      if (pointsToAdd > 0) {
+        await client.query(
+          `INSERT INTO point_transactions
+           (customer_id, transaction_type, points, previous_balance, new_balance, reason, performed_by, created_at, date)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          [
+            customer_id,
+            'credit',
+            pointsToAdd,
+            previousPoints,
+            newPoints,
+            `Payment ID ${payment.payment_id} - ${mode}${remarks ? ' - ' + remarks : ''}`,
+            req.user ? req.user.userId : null, // Assuming user info is in req.user from auth middleware
+            payment.created_at,
+            payment.date.toISOString().split('T')[0] // Format as YYYY-MM-DD
+          ]
+        );
+      }
+
+      await client.query("COMMIT");
+
+      res.status(201).json({
+        message: "Payment recorded successfully",
+        payment: {
+          payment_id: payment.payment_id,
+          customer_id: payment.customer_id,
+          amount: payment.amount,
+          mode: payment.mode,
+          status: payment.status,
+          remarks: payment.remarks,
+          date: payment.date,
+          created_at: payment.created_at,
+          updated_at: payment.updated_at
+        },
+        pointsAdded: pointsToAdd,
+        customerPoints: {
+          previousBalance: previousPoints,
+          newBalance: newPoints,
+          pointsAdded: pointsToAdd
+        }
+      });
+
     } catch (err) {
       await client.query("ROLLBACK");
       throw err;
