@@ -57,8 +57,8 @@ export const getCustomersReport = async (req, res) => {
           customer.payment_count > 0
             ? parseFloat(customer.total_payments) /
               parseInt(customer.payment_count)
-            : 0,
-      },
+            : 0
+      }
     }));
 
     // Format could be 'json', 'csv', 'excel' but only implementing 'json' for now
@@ -67,7 +67,7 @@ export const getCustomersReport = async (req, res) => {
       generatedAt: new Date(),
       customerCount: customersWithMetrics.length,
       customers: customersWithMetrics,
-      filters: { location, status },
+      filters: { location, status }
     });
   } catch (error) {
     console.error("Generate customers report error:", error);
@@ -128,7 +128,7 @@ export const getPaymentsReport = async (req, res) => {
       averageAmount:
         result.rows.length > 0 ? total_amount / result.rows.length : 0,
       paymentCountByMode,
-      amountByMode,
+      amountByMode
     };
 
     // Format could be 'json', 'csv', 'excel' but only implementing 'json' for now
@@ -137,7 +137,7 @@ export const getPaymentsReport = async (req, res) => {
       generatedAt: new Date(),
       filters: { fromDate, toDate, mode },
       summary,
-      payments: result.rows,
+      payments: result.rows
     });
   } catch (error) {
     console.error("Generate payments report error:", error);
@@ -199,10 +199,8 @@ export const getRoutesReport = async (req, res) => {
                 100
               : 0,
           customerCount: parseInt(route.customercount),
-          activeCustomers: parseInt(
-            customerCountResult.rows[0].activecustomers
-          ),
-        },
+          activeCustomers: parseInt(customerCountResult.rows[0].activecustomers)
+        }
       };
     });
 
@@ -213,7 +211,7 @@ export const getRoutesReport = async (req, res) => {
       reportName: "Routes Report",
       generatedAt: new Date(),
       routeCount: routesWithMetrics.length,
-      routes: routesWithMetrics,
+      routes: routesWithMetrics
     });
   } catch (error) {
     console.error("Generate routes report error:", error);
@@ -287,7 +285,7 @@ export const getDrivesReport = async (req, res) => {
         result.rows.length > 0 ? totalSold / result.rows.length : 0,
       averageAmountPerDrive:
         result.rows.length > 0 ? total_amount / result.rows.length : 0,
-      deliveryRate: totalStock > 0 ? (totalSold / totalStock) * 100 : 0,
+      deliveryRate: totalStock > 0 ? (totalSold / totalStock) * 100 : 0
     };
 
     // Format could be 'json', 'csv', 'excel' but only implementing 'json' for now
@@ -296,7 +294,7 @@ export const getDrivesReport = async (req, res) => {
       generatedAt: new Date(),
       filters: { fromDate, toDate, route_id, status },
       summary,
-      drives: result.rows,
+      drives: result.rows
     });
   } catch (error) {
     console.error("Generate drives report error:", error);
@@ -319,8 +317,7 @@ export const getCustomReport = async (req, res) => {
       !["sales", "payments", "customers"].includes(reportType)
     ) {
       return res.status(400).json({
-        message:
-          "Valid report type is required (sales, payments, or customers)",
+        message: "Valid report type is required (sales, payments, or customers)"
       });
     }
 
@@ -367,7 +364,7 @@ export const getCustomReport = async (req, res) => {
                   (sum, day) => sum + parseFloat(day.totalamount || 0),
                   0
                 ) / data.length
-              : 0,
+              : 0
         };
         break;
 
@@ -392,7 +389,7 @@ export const getCustomReport = async (req, res) => {
 
         // Calculate summary metrics
         const uniqueDays = [
-          ...new Set(data.map((row) => row.day.toISOString().split("T")[0])),
+          ...new Set(data.map((row) => row.day.toISOString().split("T")[0]))
         ];
         const totalPayments = data.reduce(
           (sum, day) => sum + parseInt(day.paymentcount || 0),
@@ -422,7 +419,7 @@ export const getCustomReport = async (req, res) => {
             uniqueDays.length > 0 ? totalPayments / uniqueDays.length : 0,
           averageDailyAmount:
             uniqueDays.length > 0 ? total_amount / uniqueDays.length : 0,
-          paymentsByMode,
+          paymentsByMode
         };
         break;
 
@@ -458,7 +455,7 @@ export const getCustomReport = async (req, res) => {
 
         summary = {
           ...customerMetricsResult.rows[0],
-          dailyGrowthData: data,
+          dailyGrowthData: data
         };
         break;
     }
@@ -472,7 +469,7 @@ export const getCustomReport = async (req, res) => {
       dateRange: { fromDate, toDate },
       reportType,
       summary,
-      data,
+      data
     });
   } catch (error) {
     console.error("Generate custom report error:", error);

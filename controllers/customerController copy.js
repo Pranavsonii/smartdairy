@@ -1,5 +1,4 @@
 import pool from "../config/database.js";
-import { isValidDateTime } from "../utils/dateValidation.js";
 
 export const getCustomers = async (req, res) => {
   try {
@@ -162,13 +161,7 @@ export const getCustomerById = async (req, res) => {
     const { id } = req.params;
 
     // Get date range parameters from query
-    const {
-      fromDate,
-      toDate,
-      transactionType,
-      limit = 500,
-      page = 1
-    } = req.query;
+    const { fromDate, toDate, transactionType, limit = 500, page = 1 } = req.query;
 
     const result = await pool.query(
       "SELECT * FROM customers WHERE customer_id = $1",
@@ -217,14 +210,14 @@ export const getCustomerById = async (req, res) => {
     }
 
     // Add transaction type filter
-    if (transactionType && ["credit", "debit"].includes(transactionType)) {
+    if (transactionType && ['credit', 'debit'].includes(transactionType)) {
       transactionQuery += ` AND transaction_type = $${paramCounter}`;
       transactionParams.push(transactionType);
       paramCounter++;
     }
 
     // Add ordering and pagination
-    transactionQuery += ` ORDER BY date DESC`;
+    transactionQuery += ` ORDER BY created_at DESC`;
 
     if (limit) {
       const offset = (parseInt(page) - 1) * parseInt(limit);
@@ -233,16 +226,7 @@ export const getCustomerById = async (req, res) => {
     }
 
     // Execute transaction query
-    const transactionResult = await pool.query(
-      transactionQuery,
-      transactionParams
-    );
-
-    // Calculate balances for the transactions
-    const transactionsWithBalances = await calculateTransactionBalances(
-      transactionResult.rows,
-      id
-    );
+    const transactionResult = await pool.query(transactionQuery, transactionParams);
 
     // Get total count for pagination (with same filters)
     let countQuery = `
@@ -264,7 +248,7 @@ export const getCustomerById = async (req, res) => {
       countParamCounter++;
     }
 
-    if (transactionType && ["credit", "debit"].includes(transactionType)) {
+    if (transactionType && ['credit', 'debit'].includes(transactionType)) {
       countQuery += ` AND transaction_type = $${countParamCounter}`;
       countParams.push(transactionType);
     }
@@ -297,7 +281,7 @@ export const getCustomerById = async (req, res) => {
       summaryParamCounter++;
     }
 
-    if (transactionType && ["credit", "debit"].includes(transactionType)) {
+    if (transactionType && ['credit', 'debit'].includes(transactionType)) {
       summaryQuery += ` AND transaction_type = $${summaryParamCounter}`;
       summaryParams.push(transactionType);
     }
@@ -307,7 +291,7 @@ export const getCustomerById = async (req, res) => {
 
     // Attach transactions with pagination info
     customer.transactions = {
-      data: transactionsWithBalances, // Use calculated balances
+      data: transactionResult.rows,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -327,29 +311,13 @@ export const getCustomerById = async (req, res) => {
       }
     };
 
-    // Add validation for fromDate and toDate
-    if (fromDate && !isValidDateTime(fromDate)) {
-      return res.status(400).json({
-        message:
-          "Invalid fromDate format. Please use YYYY-MM-DD or YYYY-MM-DD HH:MM:SS",
-        receivedDate: fromDate
-      });
-    }
-
-    if (toDate && !isValidDateTime(toDate)) {
-      return res.status(400).json({
-        message:
-          "Invalid toDate format. Please use YYYY-MM-DD or YYYY-MM-DD HH:MM:SS",
-        receivedDate: toDate
-      });
-    }
-
     res.json({ customer: customer });
   } catch (error) {
     console.error("Get customer by ID error:", error);
     res.status(500).json({ message: "Server error" });
   }
 };
+
 
 export const createCustomer = async (req, res) => {
   try {
@@ -832,7 +800,9 @@ export const addCustomerPoints = async (req, res) => {
   try {
     const { id } = req.params;
     var { points } = req.body;
+
     const transactionType = points < 0 ? "debit" : "credit";
+
 
     if (!points) {
       return res
@@ -840,6 +810,7 @@ export const addCustomerPoints = async (req, res) => {
         .json({ message: "Valid points value is required" });
     }
 
+    // Get current points
     const checkResult = await pool.query(
       "SELECT points FROM customers WHERE customer_id = $1",
       [id]
@@ -850,6 +821,8 @@ export const addCustomerPoints = async (req, res) => {
     }
 
     const currentPoints = checkResult.rows[0].points;
+
+    // Start transaction
     const client = await pool.connect();
 
     try {
@@ -863,11 +836,19 @@ export const addCustomerPoints = async (req, res) => {
 
       const newBalance = result.rows[0].points;
 
-      // Log transaction WITHOUT balance columns
+      // Log the transaction
       await client.query(
-        `INSERT INTO point_transactions (customer_id, transaction_type, points, performed_by)
-         VALUES ($1, $2, $3, $4)`,
-        [id, transactionType, Math.abs(points), req.user.user_id]
+        `INSERT INTO point_transactions
+         (customer_id, transaction_type, points, previous_balance, new_balance, performed_by)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          id,
+          transactionType,
+          Math.abs(points),
+          currentPoints,
+          newBalance,
+          req.user.user_id
+        ]
       );
 
       await client.query("COMMIT");
@@ -904,14 +885,12 @@ export const deductCustomerPoints = async (req, res) => {
         .json({ message: "Valid points value is required" });
     }
 
-    if (date && !isValidDateTime(date)) {
-      return res.status(400).json({
-        message:
-          "Invalid date format. Please use YYYY-MM-DD or YYYY-MM-DD HH:MM:SS",
-        receivedDate: date
-      });
-    }
+    // check date format
+    // if (date && isNaN(Date.parse(date))) {
+    //   return res.status(400).json({ message: "Invalid date format" });
+    // }
 
+    // Check if customer has sufficient points and get stop_loss
     const checkResult = await pool.query(
       "SELECT points, stop_loss FROM customers WHERE customer_id = $1",
       [id]
@@ -921,25 +900,35 @@ export const deductCustomerPoints = async (req, res) => {
       return res.status(404).json({ message: "Customer not found" });
     }
 
+
     const currentPoints = parseInt(checkResult.rows[0].points);
     const stopLoss = parseInt(checkResult.rows[0].stop_loss) * -1;
 
-    if (
-      currentPoints <= 0 &&
-      currentPoints - points <= 0 &&
-      stopLoss &&
-      currentPoints - points < stopLoss
-    ) {
+    // Check if customer has stop_loss and if current points would go below stop_loss after deduction
+
+
+    // if ( !stopLoss && stopLoss < (currentPoints - points) ) {
+      if (currentPoints <= 0 && (currentPoints - points) <= 0 && stopLoss && (currentPoints - points) < stopLoss ) {
       return res.status(400).json({
         message: `Cannot deduct points. Points would go below stop loss limit of ${stopLoss}`
       });
     }
 
+    /*  // Update points
+    const result = await pool.query(
+      "UPDATE customers SET points = points - $1 WHERE customer_id = $2 RETURNING customer_id, points",
+      [points, id]
+    ); */
+
+    console.log(req.user);
+
+    // Start transaction
     const client = await pool.connect();
 
     try {
       await client.query("BEGIN");
 
+      // Update customer points
       const result = await client.query(
         "UPDATE customers SET points = points - $1 WHERE customer_id = $2 RETURNING customer_id, points",
         [points, id]
@@ -947,11 +936,21 @@ export const deductCustomerPoints = async (req, res) => {
 
       const newBalance = result.rows[0].points;
 
-      // Log transaction WITHOUT balance columns
+      // Log the transaction
       await client.query(
-        `INSERT INTO point_transactions (customer_id, transaction_type, points, date, performed_by)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [id, "debit", points, date || null, req.user.user_id]
+        `INSERT INTO point_transactions
+         (customer_id, transaction_type, points, previous_balance, new_balance, date, performed_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          id,
+          "debit",
+          points,
+          currentPoints,
+          newBalance,
+          // reason || "Manual deduction",
+          date || null,
+          req.user.user_id
+        ]
       );
 
       await client.query("COMMIT");
@@ -1082,10 +1081,21 @@ export const getCustomerRoutes = async (req, res) => {
 // All Transaction Combined
 export const getCustomerTransactions = async (req, res) => {
   try {
+    // const { id } = req.params;
+
+    // Check if customer exists
+    // const checkResult = await pool.query("SELECT customer_id FROM customers");
+
+    // if (checkResult.rows.length === 0) {
+    //   return res.status(404).json({ message: "Customer not found" });
+    // }
+
+    // Get pagination parameters
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 500;
     const offset = (page - 1) * limit;
 
+    // Query to get all transactions for this customer
     const result = await pool.query(
       `SELECT pt.*, c.name AS customer_name, c.phone AS customer_phone
        FROM point_transactions pt
@@ -1095,36 +1105,17 @@ export const getCustomerTransactions = async (req, res) => {
       [limit, offset]
     );
 
-    // Group by customer and calculate balances
-    const customerGroups = new Map();
-    for (const txn of result.rows) {
-      if (!customerGroups.has(txn.customer_id)) {
-        customerGroups.set(txn.customer_id, []);
-      }
-      customerGroups.get(txn.customer_id).push(txn);
-    }
+    console.log("Transactions Result:", result.rows);
 
-    const allTransactionsWithBalances = [];
-    for (const [customerId, transactions] of customerGroups) {
-      const withBalances = await calculateTransactionBalances(
-        transactions,
-        customerId
-      );
-      allTransactionsWithBalances.push(...withBalances);
-    }
-
-    // Sort by created_at DESC to maintain order
-    allTransactionsWithBalances.sort(
-      (a, b) => new Date(b.created_at) - new Date(a.created_at)
-    );
-
+    // Get total count for pagination
     const countResult = await pool.query(
       `SELECT COUNT(*) FROM point_transactions`
     );
+
     const totalCount = parseInt(countResult.rows[0].count);
 
     res.json({
-      transactions: allTransactionsWithBalances,
+      transactions: result.rows,
       pagination: {
         page,
         limit,
@@ -1136,360 +1127,4 @@ export const getCustomerTransactions = async (req, res) => {
     console.error("Get customer transactions error:", error);
     res.status(500).json({ message: "Server error" });
   }
-};
-
-// Helper function to recalculate customer balance from all transactions
-const recalculateCustomerBalance = async (customerId, client = pool) => {
-  const result = await client.query(
-    `
-    SELECT COALESCE(SUM(CASE
-      WHEN transaction_type = 'credit' THEN points
-      ELSE -points
-    END), 0) as total_balance
-    FROM point_transactions
-    WHERE customer_id = $1
-  `,
-    [customerId]
-  );
-
-  return parseInt(result.rows[0].total_balance);
-};
-
-// Helper function to recalculate transaction balances chronologically
-// const recalculateTransactionBalances = async (customerId, client = pool) => {
-//   // Get all transactions for this customer in chronological order
-//   const transactionsResult = await client.query(
-//     `
-//     SELECT transaction_id, transaction_type, points
-//     FROM point_transactions
-//     WHERE customer_id = $1
-//     ORDER BY created_at ASC, transaction_id ASC
-//   `,
-//     [customerId]
-//   );
-
-//   const transactions = transactionsResult.rows;
-//   let runningBalance = 0;
-
-//   // Calculate and update balances for each transaction
-//   for (let i = 0; i < transactions.length; i++) {
-//     const transaction = transactions[i];
-//     const previousBalance = runningBalance;
-
-//     // Calculate new balance based on transaction type
-//     if (transaction.transaction_type === "credit") {
-//       runningBalance += parseInt(transaction.points);
-//     } else {
-//       runningBalance -= parseInt(transaction.points);
-//     }
-
-//     // Update the transaction with correct balances
-//     await client.query(
-//       `
-//       UPDATE point_transactions
-//       SET previous_balance = $1, new_balance = $2
-//       WHERE transaction_id = $3
-//     `,
-//       [previousBalance, runningBalance, transaction.transaction_id]
-//     );
-//   }
-
-//   return runningBalance; // Final customer balance
-// };
-
-// Edit transaction method
-export const updateTransaction = async (req, res) => {
-  try {
-    const { customerId, transactionId } = req.params;
-    const { points, reason, date } = req.body;
-
-    // 1. Admin role check
-    if (req.user.role !== "admin") {
-      return res
-        .status(403)
-        .json({ message: "Only admin can edit transactions" });
-    }
-
-    // 2. Basic validation
-    if (!points || points <= 0) {
-      return res
-        .status(400)
-        .json({ message: "Valid points value is required" });
-    }
-
-    if (date && !isValidDateTime(date)) {
-      return res.status(400).json({
-        message:
-          "Invalid date format. Please use YYYY-MM-DD or YYYY-MM-DD HH:MM:SS",
-        receivedDate: date
-      });
-    }
-
-    // 3. Get the existing transaction
-    const existingTransactionResult = await pool.query(
-      "SELECT * FROM point_transactions WHERE transaction_id = $1 AND customer_id = $2",
-      [transactionId, customerId]
-    );
-
-    if (existingTransactionResult.rows.length === 0) {
-      return res.status(404).json({ message: "Transaction not found" });
-    }
-
-    const existingTransaction = existingTransactionResult.rows[0];
-
-    // 4. Only allow editing debit transactions
-    if (existingTransaction.transaction_type !== "debit") {
-      return res.status(400).json({
-        message: "Only debit transactions can be edited"
-      });
-    }
-
-    // 5. Don't allow editing payment-related transactions
-    if (
-      existingTransaction.reason &&
-      existingTransaction.reason.includes("Payment ID")
-    ) {
-      return res.status(400).json({
-        message: "Payment-related transactions cannot be edited"
-      });
-    }
-
-    // 6. Check if this transaction is within last 10 debit transactions for this customer
-    const recentTransactionsResult = await pool.query(
-      `SELECT transaction_id
-       FROM point_transactions
-       WHERE customer_id = $1
-         AND transaction_type = 'debit'
-         AND (reason IS NULL OR reason NOT LIKE '%Payment ID%')
-       ORDER BY created_at DESC
-       LIMIT 10`,
-      [customerId]
-    );
-
-    const recentTransactionIds = recentTransactionsResult.rows.map(
-      (row) => row.transaction_id
-    );
-
-    if (!recentTransactionIds.includes(parseInt(transactionId))) {
-      return res.status(400).json({
-        message: "Only last 10 debit transactions can be edited"
-      });
-    }
-
-    // 7. Get customer details
-    const customerResult = await pool.query(
-      "SELECT points, stop_loss, name FROM customers WHERE customer_id = $1",
-      [customerId]
-    );
-
-    if (customerResult.rows.length === 0) {
-      return res.status(404).json({ message: "Customer not found" });
-    }
-
-    const customer = customerResult.rows[0];
-
-    // Start transaction
-
-    const client = await pool.connect();
-    try {
-      await client.query("BEGIN");
-
-      const oldPoints = existingTransaction.points;
-      const oldReason = existingTransaction.reason;
-      const oldDate = existingTransaction.date;
-
-      // Update transaction (no balance columns)
-      await client.query(
-        `UPDATE point_transactions SET points = $1, reason = $2, date = $3 WHERE transaction_id = $4`,
-        [parseInt(points), reason || oldReason, date || oldDate, transactionId]
-      );
-
-      // Recalculate customer balance
-      const finalCustomerBalance = await recalculateCustomerBalance(
-        customerId,
-        client
-      );
-
-      // Stop loss check
-      const stopLoss = parseInt(customer.stop_loss) * -1;
-      if (
-        finalCustomerBalance <= 0 &&
-        stopLoss &&
-        finalCustomerBalance < stopLoss
-      ) {
-        await client.query("ROLLBACK");
-        return res.status(400).json({
-          message: `Cannot update transaction. New balance ${finalCustomerBalance} would be below stop loss limit of ${stopLoss}`,
-          currentBalance: customer.points,
-          newBalance: finalCustomerBalance,
-          stopLossLimit: stopLoss
-        });
-      }
-
-      // Update customer balance
-      await client.query(
-        "UPDATE customers SET points = $1, updated_at = NOW() WHERE customer_id = $2",
-        [finalCustomerBalance, customerId]
-      );
-
-      // Get updated transaction and calculate balances
-      const updatedTransactionResult = await pool.query(
-        "SELECT * FROM point_transactions WHERE transaction_id = $1",
-        [transactionId]
-      );
-
-      const transactionWithBalances = await calculateTransactionBalances(
-        [updatedTransactionResult.rows[0]],
-        customerId
-      );
-
-      // Audit log
-      await client.query(
-        `INSERT INTO transaction_audit_log
-         (transaction_id, customer_id, old_points, new_points, old_reason, new_reason, old_date, new_date, edited_by, edit_timestamp)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())`,
-        [
-          transactionId,
-          customerId,
-          oldPoints,
-          parseInt(points),
-          oldReason,
-          reason || oldReason,
-          oldDate,
-          date || oldDate,
-          req.user.user_id
-        ]
-      );
-
-      await client.query("COMMIT");
-
-      res.json({
-        message: "Transaction updated successfully",
-        transaction: transactionWithBalances[0], // Has calculated balances
-        changes: {
-          oldPoints,
-          newPoints: parseInt(points),
-          pointsDifference: parseInt(points) - oldPoints,
-          oldReason,
-          newReason: reason || oldReason,
-          oldDate,
-          newDate: date || oldDate
-        },
-        customerBalance: {
-          previousBalance: customer.points,
-          newBalance: finalCustomerBalance,
-          balanceChange: finalCustomerBalance - customer.points
-        }
-      });
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
-    }
-  } catch (error) {
-    console.error("Update transaction error:", error);
-    res.status(500).json({ message: "Server error" });
-  }
-};
-
-// Get transaction by ID with edit history
-export const getTransactionById = async (req, res) => {
-  try {
-    const { transactionId } = req.params;
-
-    // Get transaction details
-    const transactionResult = await pool.query(
-      `SELECT pt.*, c.name as customer_name, c.phone as customer_phone
-       FROM point_transactions pt
-       JOIN customers c ON pt.customer_id = c.customer_id
-       WHERE pt.transaction_id = $1`,
-      [transactionId]
-    );
-
-    if (transactionResult.rows.length === 0) {
-      return res.status(404).json({ message: "Transaction not found" });
-    }
-
-    const transaction = transactionResult.rows[0];
-
-    // Get edit history from audit table
-    const auditResult = await pool.query(
-      `SELECT tal.*
-   FROM transaction_audit_log tal
-   WHERE tal.transaction_id = $1
-   ORDER BY tal.edit_timestamp DESC`,
-      [transactionId]
-    );
-    transaction.editHistory = auditResult.rows;
-
-    // Check if transaction is editable (last 10 debit transactions)
-    const recentTransactionsResult = await pool.query(
-      `
-      SELECT transaction_id
-      FROM point_transactions
-      WHERE customer_id = $1
-        AND transaction_type = 'debit'
-        AND (reason IS NULL OR reason NOT LIKE '%Payment ID%')
-      ORDER BY created_at DESC
-      LIMIT 10
-    `,
-      [transaction.customer_id]
-    );
-
-    const recentTransactionIds = recentTransactionsResult.rows.map(
-      (row) => row.transaction_id
-    );
-    transaction.isEditable =
-      recentTransactionIds.includes(transaction.transaction_id) &&
-      transaction.transaction_type === "debit" &&
-      (!transaction.reason || !transaction.reason.includes("Payment ID"));
-
-    res.json({ transaction });
-  } catch (error) {
-    console.error("Get transaction by ID error:", error);
-    res.status(500).json({ message: "Server error" });
-  }
-};
-
-// Add this helper function to your customerController.js
-
-const calculateTransactionBalances = async (transactions, customerId) => {
-  if (!transactions || transactions.length === 0) return [];
-
-  // Get ALL transactions for this customer in chronological order
-  const allTransactionsResult = await pool.query(
-    `SELECT transaction_id, transaction_type, points, created_at
-     FROM point_transactions
-     WHERE customer_id = $1
-     ORDER BY date ASC, transaction_id ASC`,
-    [customerId]
-  );
-
-  // Calculate running balances
-  let runningBalance = 0;
-  const balanceMap = new Map();
-
-  for (const txn of allTransactionsResult.rows) {
-    const previousBalance = runningBalance;
-
-    if (txn.transaction_type === "credit") {
-      runningBalance += parseInt(txn.points);
-    } else {
-      runningBalance -= parseInt(txn.points);
-    }
-
-    balanceMap.set(txn.transaction_id, {
-      previous_balance: previousBalance,
-      new_balance: runningBalance
-    });
-  }
-
-  // Add calculated balances to requested transactions
-  return transactions.map((transaction) => ({
-    ...transaction,
-    previous_balance:
-      balanceMap.get(transaction.transaction_id)?.previous_balance || 0,
-    new_balance: balanceMap.get(transaction.transaction_id)?.new_balance || 0
-  }));
 };

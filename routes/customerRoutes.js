@@ -10,7 +10,9 @@ import {
   deductCustomerPoints,
   getCustomerPaymentLogs,
   getCustomerRoutes,
-  getCustomerTransactions
+  getCustomerTransactions,
+  updateTransaction,
+  getTransactionById
 } from "../controllers/customerController.js";
 import {
   uploadCustomerPhoto,
@@ -19,8 +21,6 @@ import {
 import { authenticate, authorize } from "../middlewares/authMiddleware.js";
 
 const router = express.Router();
-
-router.get("/transactions", authenticate, getCustomerTransactions);
 
 router.get("/", authenticate, getCustomers);
 router.get("/:id", authenticate, getCustomerById);
@@ -46,5 +46,12 @@ router.post("/:id/points", authenticate, addCustomerPoints);
 router.put("/:id/points/deduct", authenticate, deductCustomerPoints);
 router.get("/:id/payment-logs", authenticate, getCustomerPaymentLogs);
 router.get("/:id/routes", authenticate, getCustomerRoutes);
+
+// Transaction editing routes
+router.put('/:customerId/transactions/:transactionId', authenticate, updateTransaction);
+router.get('/transactions/:transactionId', authenticate, getTransactionById);
+router.get("/transactions", authenticate, getCustomerTransactions);
+
+
 
 export default router;

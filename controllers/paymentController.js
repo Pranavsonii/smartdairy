@@ -1,4 +1,5 @@
 import pool from "../config/database.js";
+import { isValidDateTime } from "../utils/dateValidation.js";
 
 export const getPayments = async (req, res) => {
   try {
@@ -9,6 +10,15 @@ export const getPayments = async (req, res) => {
 
     // Get filter parameters
     const { customer_id, fromDate, toDate, mode, status } = req.query;
+
+    // Add validation in getPayments method (lines 11, 28, 33)
+    if (fromDate && !isValidDateTime(fromDate)) {
+      return res.status(400).json({ message: "Invalid fromDate format" });
+    }
+
+    if (toDate && !isValidDateTime(toDate)) {
+      return res.status(400).json({ message: "Invalid toDate format" });
+    }
 
     let query = `
       SELECT pl.*, c.name as customerName, c.phone as customerPhone
@@ -96,8 +106,8 @@ export const getPayments = async (req, res) => {
         page,
         limit,
         totalCount,
-        totalPages: Math.ceil(totalCount / limit),
-      },
+        totalPages: Math.ceil(totalCount / limit)
+      }
     });
   } catch (error) {
     console.error("Get payments error:", error);
@@ -127,85 +137,6 @@ export const getPaymentById = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
-/*
-export const createPayment = async (req, res) => {
-  try {
-    const { customer_id, amount, mode, remarks, date } = req.body;
-
-    // Basic validation
-    if (!customer_id || !amount || !mode) {
-      return res
-        .status(400)
-        .json({ message: "Customer ID, amount, and mode are required" });
-    }
-
-    // Check if amount is valid
-    if (amount <= 0) {
-      return res.status(400).json({ message: "Amount must be greater than 0" });
-    }
-
-    // Check if customer exists
-    const customerCheck = await pool.query(
-      "SELECT customer_id FROM customers WHERE customer_id = $1",
-      [customer_id]
-    );
-
-    if (customerCheck.rows.length === 0) {
-      return res.status(404).json({ message: "Customer not found" });
-    }
-
-    // Create payment with transaction to update customer points
-    const client = await pool.connect();
-
-    try {
-      await client.query("BEGIN");
-
-      // Create payment log
-      const paymentResult = await client.query(
-        `INSERT INTO payment_logs (customer_id, amount, mode, remarks, date)
-         VALUES ($1, $2, $3, $4, $5)
-         RETURNING *`,
-        [customer_id, amount, mode, remarks || null, date || new Date()]
-      );
-
-      // Add points to customer (1 point for each unit of currency)
-      const points = Math.floor(amount);
-      if (points > 0) {
-        await client.query(
-          `UPDATE customers
-           SET points = points + $1, updated_at = NOW()
-           WHERE customer_id = $2`,
-          [points, customer_id]
-        );
-      }
-
-      await client.query("COMMIT");
-
-      // Get updated customer data
-      const customerResult = await pool.query(
-        "SELECT points FROM customers WHERE customer_id = $1",
-        [customer_id]
-      );
-
-      res.status(201).json({
-        message: "Payment recorded successfully",
-        payment: paymentResult.rows[0],
-        customerPoints: customerResult.rows[0].points,
-      });
-    } catch (err) {
-      await client.query("ROLLBACK");
-      throw err;
-    } finally {
-      client.release();
-    }
-  } catch (error) {
-    console.error("Create payment error:", error);
-    res.status(500).json({ message: "Server error" });
-  }
-};
- */
-
-
 
 export const createPayment = async (req, res) => {
   try {
@@ -216,6 +147,11 @@ export const createPayment = async (req, res) => {
       return res
         .status(400)
         .json({ message: "Customer ID, amount, and mode are required" });
+    }
+
+    // Date Validation
+    if (date && !isValidDateTime(date)) {
+      return res.status(400).json({ message: "Invalid date format" });
     }
 
     // Check if amount is valid
@@ -269,18 +205,18 @@ export const createPayment = async (req, res) => {
       if (pointsToAdd > 0) {
         await client.query(
           `INSERT INTO point_transactions
-           (customer_id, transaction_type, points, previous_balance, new_balance, reason, performed_by, created_at, date)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+           (customer_id, transaction_type, points, reason, performed_by, created_at, date)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
           [
             customer_id,
-            'credit',
+            "credit",
             pointsToAdd,
-            previousPoints,
-            newPoints,
-            `Payment ID ${payment.payment_id} - ${mode}${remarks ? ' - ' + remarks : ''}`,
+            `Payment ID ${payment.payment_id} - ${mode}${
+              remarks ? " - " + remarks : ""
+            }`,
             req.user ? req.user.userId : null, // Assuming user info is in req.user from auth middleware
             payment.created_at,
-            payment.date.toISOString().split('T')[0] // Format as YYYY-MM-DD
+            payment.date.toISOString().split("T")[0] // Format as YYYY-MM-DD
           ]
         );
       }
@@ -307,7 +243,6 @@ export const createPayment = async (req, res) => {
           pointsAdded: pointsToAdd
         }
       });
-
     } catch (err) {
       await client.query("ROLLBACK");
       throw err;
@@ -414,7 +349,7 @@ export const updatePayment = async (req, res) => {
 
       res.json({
         message: "Payment updated successfully",
-        payment: result.rows[0],
+        payment: result.rows[0]
       });
     } catch (err) {
       await client.query("ROLLBACK");
@@ -451,7 +386,9 @@ export const deletePayment = async (req, res) => {
       await client.query("BEGIN");
 
       // Delete payment
-      await client.query("DELETE FROM payment_logs WHERE payment_id = $1", [id]);
+      await client.query("DELETE FROM payment_logs WHERE payment_id = $1", [
+        id
+      ]);
 
       // Deduct points from customer
       const pointsToDeduct = Math.floor(payment.amount);
@@ -468,7 +405,7 @@ export const deletePayment = async (req, res) => {
 
       res.json({
         message: "Payment deleted successfully",
-        deductedPoints: pointsToDeduct,
+        deductedPoints: pointsToDeduct
       });
     } catch (err) {
       await client.query("ROLLBACK");
@@ -501,7 +438,7 @@ export const getOverdueAccounts = async (req, res) => {
 
     res.json({
       overdueAccounts: result.rows,
-      count: result.rows.length,
+      count: result.rows.length
     });
   } catch (error) {
     console.error("Get overdue accounts error:", error);
@@ -539,12 +476,12 @@ export const generateReceipt = async (req, res) => {
       amount: payment.amount,
       paymentMode: payment.mode,
       status: payment.status,
-      remarks: payment.remarks,
+      remarks: payment.remarks
     };
 
     res.json({
       receipt,
-      pdfUrl: `/receipts/${receipt.receiptNumber}.pdf`, // This would be a real URL in production
+      pdfUrl: `/receipts/${receipt.receiptNumber}.pdf` // This would be a real URL in production
     });
   } catch (error) {
     console.error("Generate receipt error:", error);
@@ -585,7 +522,7 @@ export const sendReceipt = async (req, res) => {
     res.json({
       message: `Receipt sent via ${method} successfully`,
       sentTo: method === "sms" ? payment.customerphone : "email@example.com",
-      payment_id: payment.paymentid,
+      payment_id: payment.paymentid
     });
   } catch (error) {
     console.error("Send receipt error:", error);
