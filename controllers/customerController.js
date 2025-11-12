@@ -15,39 +15,121 @@ export const getCustomers = async (req, res) => {
     // Get filter parameters
     const { name, location, status } = req.query;
 
-    // Initialize query and parameters
-    let query = "SELECT * FROM customers WHERE 1=1";
+    // Build WHERE clause conditions
+    const whereConditions = [];
     const params = [];
 
-    // Apply filters if provided
     if (name) {
       params.push(`%${name}%`);
-      query += ` AND name LIKE $${params.length}`;
+      whereConditions.push(`c.name LIKE $${params.length}`);
     }
 
     if (location) {
       params.push(`%${location}%`);
-      query += ` AND location LIKE $${params.length}`;
+      whereConditions.push(`c.location LIKE $${params.length}`);
     }
 
     if (status) {
       params.push(status);
-      query += ` AND status = $${params.length}`;
+      whereConditions.push(`c.status = $${params.length}`);
     }
 
-    // If admin user, filter by their outlet_id
-    // if (req.user.role === "admin" && req.user.outlet_id) {
-    //   // Add outlet filter to query
-    //   query += " AND outlet_id = $" + params.length + 1;
-    //   params.push(req.user.outlet_id);
-    // }
+    // Build WHERE clause string
+    const whereClause = whereConditions.length > 0
+      ? `WHERE ${whereConditions.join(" AND ")}`
+      : "";
 
-    // Add pagination
-    query += ` ORDER BY name LIMIT $${params.length + 1} OFFSET $${params.length + 2
-      }`;
+    // Build count query parameters (for pagination count)
+    const countParams = [];
+    const countWhereConditions = [];
+
+    if (name) {
+      countParams.push(`%${name}%`);
+      countWhereConditions.push(`name LIKE $${countParams.length}`);
+    }
+    if (location) {
+      countParams.push(`%${location}%`);
+      countWhereConditions.push(`location LIKE $${countParams.length}`);
+    }
+    if (status) {
+      countParams.push(status);
+      countWhereConditions.push(`status = $${countParams.length}`);
+    }
+
+    const countWhereClause = countWhereConditions.length > 0
+      ? `WHERE ${countWhereConditions.join(" AND ")}`
+      : "";
+
+    // OPTIMIZED: Single query using JOINs with JSON aggregation
+    // This eliminates N+1 queries by fetching all related data in one query
+    // Instead of: 1 query + N queries for QR + N queries for transactions
+    // We now have: 2 queries total (1 for data, 1 for count)
+    const mainQuery = `
+      SELECT
+        c.customer_id,
+        c.name,
+        c.location,
+        c.phone,
+        c.address,
+        c.stop_loss,
+        c.points,
+        c.status,
+        c.default_quantity,
+        c.photo,
+        c.created_at,
+        c.updated_at,
+        qr.qr_id,
+        qr.code,
+        qr.status as qr_status,
+        qr.activated_at as qr_activated_at,
+        qr.created_at as qr_created_at,
+        qr.updated_at as qr_updated_at,
+        COALESCE(
+          json_agg(
+            json_build_object(
+              'transaction_id', pt.transaction_id,
+              'customer_id', pt.customer_id,
+              'transaction_type', pt.transaction_type,
+              'points', pt.points,
+              'date', pt.date,
+              'reason', pt.reason,
+              'performed_by', pt.performed_by,
+              'created_at', pt.created_at
+            ) ORDER BY pt.date DESC
+          ) FILTER (WHERE pt.transaction_id IS NOT NULL),
+          '[]'::json
+        ) as transactions
+      FROM customers c
+      LEFT JOIN qr_codes qr ON c.customer_id = qr.customer_id
+      LEFT JOIN point_transactions pt ON c.customer_id = pt.customer_id
+      ${whereClause}
+      GROUP BY
+        c.customer_id,
+        c.name,
+        c.location,
+        c.phone,
+        c.address,
+        c.stop_loss,
+        c.points,
+        c.status,
+        c.default_quantity,
+        c.photo,
+        c.created_at,
+        c.updated_at,
+        qr.qr_id,
+        qr.code,
+        qr.status,
+        qr.activated_at,
+        qr.created_at,
+        qr.updated_at
+      ORDER BY c.name
+      LIMIT $${params.length + 1} OFFSET $${params.length + 2}
+    `;
+
     params.push(limit, offset);
 
-    const result = await pool.query(query, params);
+    // Execute main query
+    const result = await pool.query(mainQuery, params);
 
     if (result.rows.length === 0) {
       return res.status(404).json({ message: "No customers found" });
@@ -55,59 +137,62 @@ export const getCustomers = async (req, res) => {
 
     // Get total count for pagination
     const countResult = await pool.query(
-      `SELECT COUNT(*) FROM customers WHERE 1=1${name ? " AND name LIKE $1" : ""
-      }${location ? ` AND location LIKE $${name ? 2 : 1}` : ""}${status
-        ? ` AND status = $${(name ? 1 : 0) + (location ? 1 : 0) + 1}`
-        : ""
-      }`,
-      [
-        ...(name ? [`%${name}%`] : []),
-        ...(location ? [`%${location}%`] : []),
-        ...(status ? [status] : []),
-      ]
+      `SELECT COUNT(*) FROM customers ${countWhereClause}`,
+      countParams
     );
 
     const totalCount = parseInt(countResult.rows[0].count);
 
-    // Fetch Extra data for each customer like: QR, photo URL, transactions
-    const customers = await Promise.all(
-      result.rows.map(async (customer) => {
-        const qrResult = await pool.query(
-          "SELECT * FROM qr_codes WHERE customer_id = $1",
-          [customer.customer_id]
-        );
+    // Process results: parse JSON transactions and calculate points
+    const customers = result.rows.map(customer => {
+      // Parse transactions from JSON array
+      const transactions = customer.transactions || [];
 
-        // Add full photo URL if exists
-        if (customer.photo) {
-          customer.photo_url = `${req.protocol}://${req.get("host")}/${customer.photo
-            }`;
+      // Calculate points from transactions
+      const calculatedPoints = transactions.reduce((acc, transaction) => {
+        if (transaction.transaction_type === "credit") {
+          return acc + parseInt(transaction.points);
+        } else if (transaction.transaction_type === "debit") {
+          return acc - parseInt(transaction.points);
         }
+        return acc;
+      }, 0);
 
-        // Fetch transactions for this customer
-        const transactionResult = await pool.query(
-          "SELECT * FROM point_transactions WHERE customer_id = $1 ORDER BY date DESC",
-          [customer.customer_id]
-        );
-        customer.transactions = transactionResult.rows;
+      // Build QR code object if exists (matching original format)
+      const qr = customer.qr_id ? {
+        qr_id: customer.qr_id,
+        code: customer.code,
+        customer_id: customer.customer_id,
+        status: customer.qr_status,
+        activated_at: customer.qr_activated_at,
+        created_at: customer.qr_created_at,
+        updated_at: customer.qr_updated_at,
+      } : null;
 
-        // update customer points with net balance
-        if (customer.transactions) {
-          customer.points = customer.transactions.reduce((acc, transaction) => {
-            if (transaction.transaction_type === "credit") {
-              return acc + parseInt(transaction.points);
-            } else if (transaction.transaction_type === "debit") {
-              return acc - parseInt(transaction.points);
-            }
-            return acc;
-          }, 0);
-        }
+      // Add full photo URL if exists
+      const photo_url = customer.photo
+        ? `${req.protocol}://${req.get("host")}/${customer.photo}`
+        : undefined;
 
-        return {
-          ...customer,
-          qr: qrResult.rows.length > 0 ? qrResult.rows[0] : null,
-        };
-      })
-    );
+      // Build customer object (exclude QR-related columns from main customer object)
+      const {
+        qr_id,
+        code,
+        qr_status,
+        qr_activated_at,
+        qr_created_at,
+        qr_updated_at,
+        ...customerData
+      } = customer;
+
+      return {
+        ...customerData,
+        qr: qr,
+        transactions: transactions,
+        points: calculatedPoints,
+        ...(photo_url && { photo_url: photo_url }),
+      };
+    });
 
     res.json({
       customers,
