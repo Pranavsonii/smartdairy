@@ -56,7 +56,7 @@ export const getCustomersReport = async (req, res) => {
         averagePayment:
           customer.payment_count > 0
             ? parseFloat(customer.total_payments) /
-              parseInt(customer.payment_count)
+            parseInt(customer.payment_count)
             : 0
       }
     }));
@@ -195,8 +195,8 @@ export const getRoutesReport = async (req, res) => {
           deliveryRate:
             driveResult.rows[0].totalstock > 0
               ? (driveResult.rows[0].totalsold /
-                  driveResult.rows[0].totalstock) *
-                100
+                driveResult.rows[0].totalstock) *
+              100
               : 0,
           customerCount: parseInt(route.customercount),
           activeCustomers: parseInt(customerCountResult.rows[0].activecustomers)
@@ -302,32 +302,33 @@ export const getDrivesReport = async (req, res) => {
   }
 };
 
-export const getCustomReport = async (req, res) => {
-  try {
-    const { format = "json", fromDate, toDate, reportType } = req.query;
+export const
+  getCustomReport = async (req, res) => {
+    try {
+      const { format = "json", fromDate, toDate, reportType } = req.query;
 
-    if (!fromDate || !toDate) {
-      return res
-        .status(400)
-        .json({ message: "From date and to date are required" });
-    }
+      if (!fromDate || !toDate) {
+        return res
+          .status(400)
+          .json({ message: "From date and to date are required" });
+      }
 
-    if (
-      !reportType ||
-      !["sales", "payments", "customers"].includes(reportType)
-    ) {
-      return res.status(400).json({
-        message: "Valid report type is required (sales, payments, or customers)"
-      });
-    }
+      if (
+        !reportType ||
+        !["sales", "payments", "customers"].includes(reportType)
+      ) {
+        return res.status(400).json({
+          message: "Valid report type is required (sales, payments, or customers)"
+        });
+      }
 
-    let data, summary;
+      let data, summary;
 
-    switch (reportType) {
-      case "sales":
-        // Get daily sales data
-        const salesResult = await pool.query(
-          `
+      switch (reportType) {
+        case "sales":
+          // Get daily sales data
+          const salesResult = await pool.query(
+            `
           SELECT
             DATE_TRUNC('day', d.created_at) as date,
             COUNT(DISTINCT d.drive_id) as driveCount,
@@ -338,40 +339,40 @@ export const getCustomReport = async (req, res) => {
           GROUP BY DATE_TRUNC('day', d.created_at)
           ORDER BY date
         `,
-          [fromDate, toDate]
-        );
+            [fromDate, toDate]
+          );
 
-        data = salesResult.rows;
+          data = salesResult.rows;
 
-        // Calculate summary metrics
-        summary = {
-          totalDays: data.length,
-          totalSales: data.reduce(
-            (sum, day) => sum + parseFloat(day.totalamount || 0),
-            0
-          ),
-          totalSold: data.reduce(
-            (sum, day) => sum + parseInt(day.totalsold || 0),
-            0
-          ),
-          totalDrives: data.reduce(
-            (sum, day) => sum + parseInt(day.drivecount || 0),
-            0
-          ),
-          averageDailySales:
-            data.length > 0
-              ? data.reduce(
+          // Calculate summary metrics
+          summary = {
+            totalDays: data.length,
+            totalSales: data.reduce(
+              (sum, day) => sum + parseFloat(day.totalamount || 0),
+              0
+            ),
+            totalSold: data.reduce(
+              (sum, day) => sum + parseInt(day.totalsold || 0),
+              0
+            ),
+            totalDrives: data.reduce(
+              (sum, day) => sum + parseInt(day.drivecount || 0),
+              0
+            ),
+            averageDailySales:
+              data.length > 0
+                ? data.reduce(
                   (sum, day) => sum + parseFloat(day.totalamount || 0),
                   0
                 ) / data.length
-              : 0
-        };
-        break;
+                : 0
+          };
+          break;
 
-      case "payments":
-        // Get daily payment data
-        const paymentsResult = await pool.query(
-          `
+        case "payments":
+          // Get daily payment data
+          const paymentsResult = await pool.query(
+            `
           SELECT
             DATE_TRUNC('day', date) as day,
             COUNT(*) as paymentCount,
@@ -382,51 +383,51 @@ export const getCustomReport = async (req, res) => {
           GROUP BY DATE_TRUNC('day', date), mode
           ORDER BY day, mode
         `,
-          [fromDate, toDate]
-        );
+            [fromDate, toDate]
+          );
 
-        data = paymentsResult.rows;
+          data = paymentsResult.rows;
 
-        // Calculate summary metrics
-        const uniqueDays = [
-          ...new Set(data.map((row) => row.day.toISOString().split("T")[0]))
-        ];
-        const totalPayments = data.reduce(
-          (sum, day) => sum + parseInt(day.paymentcount || 0),
-          0
-        );
-        const total_amount = data.reduce(
-          (sum, day) => sum + parseFloat(day.totalamount || 0),
-          0
-        );
+          // Calculate summary metrics
+          const uniqueDays = [
+            ...new Set(data.map((row) => row.day.toISOString().split("T")[0]))
+          ];
+          const totalPayments = data.reduce(
+            (sum, day) => sum + parseInt(day.paymentcount || 0),
+            0
+          );
+          const total_amount = data.reduce(
+            (sum, day) => sum + parseFloat(day.totalamount || 0),
+            0
+          );
 
-        // Group by payment mode
-        const paymentsByMode = data.reduce((acc, row) => {
-          const mode = row.mode;
-          if (!acc[mode]) {
-            acc[mode] = { count: 0, amount: 0 };
-          }
-          acc[mode].count += parseInt(row.paymentcount);
-          acc[mode].amount += parseFloat(row.totalamount);
-          return acc;
-        }, {});
+          // Group by payment mode
+          const paymentsByMode = data.reduce((acc, row) => {
+            const mode = row.mode;
+            if (!acc[mode]) {
+              acc[mode] = { count: 0, amount: 0 };
+            }
+            acc[mode].count += parseInt(row.paymentcount);
+            acc[mode].amount += parseFloat(row.totalamount);
+            return acc;
+          }, {});
 
-        summary = {
-          totalDays: uniqueDays.length,
-          totalPayments,
-          total_amount,
-          averageDailyPayments:
-            uniqueDays.length > 0 ? totalPayments / uniqueDays.length : 0,
-          averageDailyAmount:
-            uniqueDays.length > 0 ? total_amount / uniqueDays.length : 0,
-          paymentsByMode
-        };
-        break;
+          summary = {
+            totalDays: uniqueDays.length,
+            totalPayments,
+            total_amount,
+            averageDailyPayments:
+              uniqueDays.length > 0 ? totalPayments / uniqueDays.length : 0,
+            averageDailyAmount:
+              uniqueDays.length > 0 ? total_amount / uniqueDays.length : 0,
+            paymentsByMode
+          };
+          break;
 
-      case "customers":
-        // Get customer growth data
-        const customersResult = await pool.query(
-          `
+        case "customers":
+          // Get customer growth data
+          const customersResult = await pool.query(
+            `
           SELECT
             DATE_TRUNC('day', created_at) as date,
             COUNT(*) as newCustomers
@@ -435,14 +436,14 @@ export const getCustomReport = async (req, res) => {
           GROUP BY DATE_TRUNC('day', created_at)
           ORDER BY date
         `,
-          [fromDate, toDate]
-        );
+            [fromDate, toDate]
+          );
 
-        data = customersResult.rows;
+          data = customersResult.rows;
 
-        // Get overall customer metrics
-        const customerMetricsResult = await pool.query(
-          `
+          // Get overall customer metrics
+          const customerMetricsResult = await pool.query(
+            `
           SELECT
             COUNT(*) as total_customers,
             COUNT(CASE WHEN status = 'active' THEN 1 END) as activeCustomers,
@@ -450,29 +451,28 @@ export const getCustomReport = async (req, res) => {
             COUNT(CASE WHEN created_at BETWEEN $1 AND $2 THEN 1 END) as newCustomers
           FROM customers
         `,
-          [fromDate, toDate]
-        );
+            [fromDate, toDate]
+          );
 
-        summary = {
-          ...customerMetricsResult.rows[0],
-          dailyGrowthData: data
-        };
-        break;
+          summary = {
+            ...customerMetricsResult.rows[0],
+            dailyGrowthData: data
+          };
+          break;
+      }
+
+      // Format could be 'json', 'csv', 'excel' but only implementing 'json' for now
+      res.json({
+        reportName: `Custom ${reportType.charAt(0).toUpperCase() + reportType.slice(1)
+          } Report`,
+        generatedAt: new Date(),
+        dateRange: { fromDate, toDate },
+        reportType,
+        summary,
+        data
+      });
+    } catch (error) {
+      console.error("Generate custom report error:", error);
+      res.status(500).json({ message: "Server error" });
     }
-
-    // Format could be 'json', 'csv', 'excel' but only implementing 'json' for now
-    res.json({
-      reportName: `Custom ${
-        reportType.charAt(0).toUpperCase() + reportType.slice(1)
-      } Report`,
-      generatedAt: new Date(),
-      dateRange: { fromDate, toDate },
-      reportType,
-      summary,
-      data
-    });
-  } catch (error) {
-    console.error("Generate custom report error:", error);
-    res.status(500).json({ message: "Server error" });
-  }
-};
+  };

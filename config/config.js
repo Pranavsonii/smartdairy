@@ -16,4 +16,10 @@ export const config = {
     secret: process.env.JWT_SECRET || "your_jwt_secret",
     expiresIn: process.env.JWT_EXPIRES_IN || "1y",
   },
+
+  sms: {
+    apiKey: process.env.SMS_API_KEY || "",
+    apiUrl: "https://2factor.in/API/R1/",
+    senderId: process.env.SMS_SENDER_ID || "MILKYP",
+  },
 };

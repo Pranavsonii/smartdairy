@@ -1,6 +1,37 @@
 import pool from "../config/database.js";
 import { isValidDateTime } from "../utils/dateValidation.js";
+import { sendPaymentReceivedSMS } from "../utils/smsService.js";
 
+/**
+ * Retrieves paginated payment records with filtering and sorting capabilities
+ *
+ * @async
+ * @function getPayments
+ * @param {Object} req - Express request object
+ * @param {Object} req.query - Query parameters
+ * @param {string} [req.query.page=1] - Page number for pagination
+ * @param {string} [req.query.limit=500] - Number of records per page
+ * @param {string} [req.query.customer_id] - Filter by customer ID
+ * @param {string} [req.query.fromDate] - Filter payments from this date (must be valid datetime)
+ * @param {string} [req.query.toDate] - Filter payments to this date (must be valid datetime)
+ * @param {string} [req.query.mode] - Filter by payment mode
+ * @param {string} [req.query.status] - Filter by payment status
+ * @param {string} [req.query.sort] - Sort option: "name-asc", "name-desc", "date-asc", "date-desc", "points-asc", "points-desc"
+ * @param {Object} res - Express response object
+ *
+ * @returns {Promise<void>} JSON response containing:
+ *   - payments: Array of payment records with customer details
+ *   - pagination: Object with page, limit, totalCount, and totalPages
+ *
+ * @throws {400} Invalid fromDate or toDate format
+ * @throws {500} Server error during database operations
+ *
+ * @description
+ * Fetches payment logs from the database with joined customer information.
+ * Supports filtering by customer ID, date range, payment mode, and status.
+ * Provides sorting by customer name, date, or points in ascending/descending order.
+ * Returns paginated results with total count information.
+ */
 export const getPayments = async (req, res) => {
   try {
     // Get pagination parameters from query
@@ -9,7 +40,23 @@ export const getPayments = async (req, res) => {
     const offset = (page - 1) * limit;
 
     // Get filter parameters
-    const { customer_id, fromDate, toDate, mode, status } = req.query;
+    const { customer_id, fromDate, toDate, mode, status, sort } = req.query;
+
+    // Fix: Table alias should be consistent throughout the query
+    const sortOptions = {
+      "name-asc": "c.name ASC",
+      "name-desc": "c.name DESC",
+      "date-asc": "pl.created_at ASC", // Fixed: use 'pl' alias instead of 'pt'
+      "date-desc": "pl.created_at DESC", // Fixed: use 'pl' alias instead of 'pt'
+      "points-asc": "pl.points ASC", // Fixed: use 'pl' alias instead of 'pt'
+      "points-desc": "pl.points DESC", // Fixed: use 'pl' alias instead of 'pt'
+    };
+
+    const sortKey = sort ? sort.toString().trim() : null;
+    const orderBy =
+      sortKey && sortOptions[sortKey]
+        ? sortOptions[sortKey]
+        : "pl.created_at DESC"; // Fixed: use 'pl' alias instead of 'pt'
 
     // Add validation in getPayments method (lines 11, 28, 33)
     if (fromDate && !isValidDateTime(fromDate)) {
@@ -55,10 +102,11 @@ export const getPayments = async (req, res) => {
       query += ` AND pl.status = $${params.length}`;
     }
 
+    // Fix: Add ORDER BY before LIMIT and OFFSET
+    query += ` ORDER BY ${orderBy}`;
+
     // Add pagination
-    query += ` ORDER BY pl.date DESC LIMIT $${params.length + 1} OFFSET $${
-      params.length + 2
-    }`;
+    query += ` LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
     params.push(limit, offset);
 
     const result = await pool.query(query, params);
@@ -106,8 +154,8 @@ export const getPayments = async (req, res) => {
         page,
         limit,
         totalCount,
-        totalPages: Math.ceil(totalCount / limit)
-      }
+        totalPages: Math.ceil(totalCount / limit),
+      },
     });
   } catch (error) {
     console.error("Get payments error:", error);
@@ -161,7 +209,7 @@ export const createPayment = async (req, res) => {
 
     // Check if customer exists and get current points
     const customerCheck = await pool.query(
-      "SELECT customer_id, points FROM customers WHERE customer_id = $1",
+      "SELECT customer_id,name, phone, points FROM customers WHERE customer_id = $1",
       [customer_id]
     );
 
@@ -211,17 +259,24 @@ export const createPayment = async (req, res) => {
             customer_id,
             "credit",
             pointsToAdd,
-            `Payment ID ${payment.payment_id} - ${mode}${
-              remarks ? " - " + remarks : ""
+            `Payment ID ${payment.payment_id} - ${mode}${remarks ? " - " + remarks : ""
             }`,
             req.user ? req.user.userId : null, // Assuming user info is in req.user from auth middleware
             payment.created_at,
-            payment.date.toISOString().split("T")[0] // Format as YYYY-MM-DD
+            payment.date.toISOString().split("T")[0], // Format as YYYY-MM-DD
           ]
         );
       }
 
       await client.query("COMMIT");
+
+      // Send SMS
+      try {
+        let smsResponse = await sendPaymentReceivedSMS(customerCheck.rows[0].phone, customerCheck.rows[0].name, amount, newPoints);
+        console.log("SMS Response:", smsResponse);
+      } catch (smsError) {
+        console.error("Failed to send payment received SMS:", smsError);
+      }
 
       res.status(201).json({
         message: "Payment recorded successfully",
@@ -234,14 +289,14 @@ export const createPayment = async (req, res) => {
           remarks: payment.remarks,
           date: payment.date,
           created_at: payment.created_at,
-          updated_at: payment.updated_at
+          updated_at: payment.updated_at,
         },
         pointsAdded: pointsToAdd,
         customerPoints: {
           previousBalance: previousPoints,
           newBalance: newPoints,
-          pointsAdded: pointsToAdd
-        }
+          pointsAdded: pointsToAdd,
+        },
       });
     } catch (err) {
       await client.query("ROLLBACK");
@@ -349,7 +404,7 @@ export const updatePayment = async (req, res) => {
 
       res.json({
         message: "Payment updated successfully",
-        payment: result.rows[0]
+        payment: result.rows[0],
       });
     } catch (err) {
       await client.query("ROLLBACK");
@@ -387,7 +442,7 @@ export const deletePayment = async (req, res) => {
 
       // Delete payment
       await client.query("DELETE FROM payment_logs WHERE payment_id = $1", [
-        id
+        id,
       ]);
 
       // Deduct points from customer
@@ -405,7 +460,7 @@ export const deletePayment = async (req, res) => {
 
       res.json({
         message: "Payment deleted successfully",
-        deductedPoints: pointsToDeduct
+        deductedPoints: pointsToDeduct,
       });
     } catch (err) {
       await client.query("ROLLBACK");
@@ -438,7 +493,7 @@ export const getOverdueAccounts = async (req, res) => {
 
     res.json({
       overdueAccounts: result.rows,
-      count: result.rows.length
+      count: result.rows.length,
     });
   } catch (error) {
     console.error("Get overdue accounts error:", error);
@@ -476,12 +531,12 @@ export const generateReceipt = async (req, res) => {
       amount: payment.amount,
       paymentMode: payment.mode,
       status: payment.status,
-      remarks: payment.remarks
+      remarks: payment.remarks,
     };
 
     res.json({
       receipt,
-      pdfUrl: `/receipts/${receipt.receiptNumber}.pdf` // This would be a real URL in production
+      pdfUrl: `/receipts/${receipt.receiptNumber}.pdf`, // This would be a real URL in production
     });
   } catch (error) {
     console.error("Generate receipt error:", error);
@@ -522,7 +577,7 @@ export const sendReceipt = async (req, res) => {
     res.json({
       message: `Receipt sent via ${method} successfully`,
       sentTo: method === "sms" ? payment.customerphone : "email@example.com",
-      payment_id: payment.paymentid
+      payment_id: payment.paymentid,
     });
   } catch (error) {
     console.error("Send receipt error:", error);

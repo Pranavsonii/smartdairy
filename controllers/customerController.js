@@ -1,7 +1,11 @@
 import pool from "../config/database.js";
 import { isValidDateTime } from "../utils/dateValidation.js";
+import { sendWelcomeSMS, sendCreditDeductedSMS } from "../utils/smsService.js";
+
 
 export const getCustomers = async (req, res) => {
+  console.log(req.user);
+
   try {
     // Get pagination parameters from query
     const page = parseInt(req.query.page) || 1;
@@ -32,16 +36,15 @@ export const getCustomers = async (req, res) => {
     }
 
     // If admin user, filter by their outlet_id
-    if (req.user.role === "admin" && req.user.outlet_id) {
-      // Add outlet filter to query
-      query += " AND outlet_id = $" + params.length + 1;
-      params.push(req.user.outlet_id);
-    }
+    // if (req.user.role === "admin" && req.user.outlet_id) {
+    //   // Add outlet filter to query
+    //   query += " AND outlet_id = $" + params.length + 1;
+    //   params.push(req.user.outlet_id);
+    // }
 
     // Add pagination
-    query += ` ORDER BY name LIMIT $${params.length + 1} OFFSET $${
-      params.length + 2
-    }`;
+    query += ` ORDER BY name LIMIT $${params.length + 1} OFFSET $${params.length + 2
+      }`;
     params.push(limit, offset);
 
     const result = await pool.query(query, params);
@@ -52,17 +55,15 @@ export const getCustomers = async (req, res) => {
 
     // Get total count for pagination
     const countResult = await pool.query(
-      `SELECT COUNT(*) FROM customers WHERE 1=1${
-        name ? " AND name LIKE $1" : ""
-      }${location ? ` AND location LIKE $${name ? 2 : 1}` : ""}${
-        status
-          ? ` AND status = $${(name ? 1 : 0) + (location ? 1 : 0) + 1}`
-          : ""
+      `SELECT COUNT(*) FROM customers WHERE 1=1${name ? " AND name LIKE $1" : ""
+      }${location ? ` AND location LIKE $${name ? 2 : 1}` : ""}${status
+        ? ` AND status = $${(name ? 1 : 0) + (location ? 1 : 0) + 1}`
+        : ""
       }`,
       [
         ...(name ? [`%${name}%`] : []),
         ...(location ? [`%${location}%`] : []),
-        ...(status ? [status] : [])
+        ...(status ? [status] : []),
       ]
     );
 
@@ -78,21 +79,32 @@ export const getCustomers = async (req, res) => {
 
         // Add full photo URL if exists
         if (customer.photo) {
-          customer.photo_url = `${req.protocol}://${req.get("host")}/${
-            customer.photo
-          }`;
+          customer.photo_url = `${req.protocol}://${req.get("host")}/${customer.photo
+            }`;
         }
 
         // Fetch transactions for this customer
         const transactionResult = await pool.query(
-          "SELECT * FROM point_transactions WHERE customer_id = $1 ORDER BY created_at DESC",
+          "SELECT * FROM point_transactions WHERE customer_id = $1 ORDER BY date DESC",
           [customer.customer_id]
         );
         customer.transactions = transactionResult.rows;
 
+        // update customer points with net balance
+        if (customer.transactions) {
+          customer.points = customer.transactions.reduce((acc, transaction) => {
+            if (transaction.transaction_type === "credit") {
+              return acc + parseInt(transaction.points);
+            } else if (transaction.transaction_type === "debit") {
+              return acc - parseInt(transaction.points);
+            }
+            return acc;
+          }, 0);
+        }
+
         return {
           ...customer,
-          qr: qrResult.rows.length > 0 ? qrResult.rows[0] : null
+          qr: qrResult.rows.length > 0 ? qrResult.rows[0] : null,
         };
       })
     );
@@ -103,8 +115,8 @@ export const getCustomers = async (req, res) => {
         page,
         limit,
         totalCount,
-        totalPages: Math.ceil(totalCount / limit)
-      }
+        totalPages: Math.ceil(totalCount / limit),
+      },
     });
   } catch (error) {
     console.error("Get customers error:", error);
@@ -167,7 +179,7 @@ export const getCustomerById = async (req, res) => {
       toDate,
       transactionType,
       limit = 500,
-      page = 1
+      page = 1,
     } = req.query;
 
     const result = await pool.query(
@@ -190,9 +202,8 @@ export const getCustomerById = async (req, res) => {
 
     // Add full photo URL if exists
     if (customer.photo) {
-      customer.photo_url = `${req.protocol}://${req.get("host")}/${
-        customer.photo
-      }`;
+      customer.photo_url = `${req.protocol}://${req.get("host")}/${customer.photo
+        }`;
     }
 
     // Build dynamic transaction query with filters
@@ -205,13 +216,13 @@ export const getCustomerById = async (req, res) => {
 
     // Add date range filters
     if (fromDate) {
-      transactionQuery += ` AND DATE(created_at) >= $${paramCounter}`;
+      transactionQuery += ` AND DATE(date) >= $${paramCounter}`;
       transactionParams.push(fromDate);
       paramCounter++;
     }
 
     if (toDate) {
-      transactionQuery += ` AND DATE(created_at) <= $${paramCounter}`;
+      transactionQuery += ` AND DATE(date) <= $${paramCounter}`;
       transactionParams.push(toDate);
       paramCounter++;
     }
@@ -253,13 +264,13 @@ export const getCustomerById = async (req, res) => {
     let countParamCounter = 2;
 
     if (fromDate) {
-      countQuery += ` AND DATE(created_at) >= $${countParamCounter}`;
+      countQuery += ` AND DATE(date) >= $${countParamCounter}`;
       countParams.push(fromDate);
       countParamCounter++;
     }
 
     if (toDate) {
-      countQuery += ` AND DATE(created_at) <= $${countParamCounter}`;
+      countQuery += ` AND DATE(date) <= $${countParamCounter}`;
       countParams.push(toDate);
       countParamCounter++;
     }
@@ -272,7 +283,7 @@ export const getCustomerById = async (req, res) => {
     const countResult = await pool.query(countQuery, countParams);
     const totalTransactions = parseInt(countResult.rows[0].count);
 
-    // Calculate transaction summary for the filtered period
+    // Calculate transaction summary (without date filtering)
     let summaryQuery = `
       SELECT
         COUNT(*) as total_transactions,
@@ -284,18 +295,6 @@ export const getCustomerById = async (req, res) => {
     `;
     const summaryParams = [id];
     let summaryParamCounter = 2;
-
-    if (fromDate) {
-      summaryQuery += ` AND DATE(created_at) >= $${summaryParamCounter}`;
-      summaryParams.push(fromDate);
-      summaryParamCounter++;
-    }
-
-    if (toDate) {
-      summaryQuery += ` AND DATE(created_at) <= $${summaryParamCounter}`;
-      summaryParams.push(toDate);
-      summaryParamCounter++;
-    }
 
     if (transactionType && ["credit", "debit"].includes(transactionType)) {
       summaryQuery += ` AND transaction_type = $${summaryParamCounter}`;
@@ -312,19 +311,19 @@ export const getCustomerById = async (req, res) => {
         page: parseInt(page),
         limit: parseInt(limit),
         totalCount: totalTransactions,
-        totalPages: Math.ceil(totalTransactions / parseInt(limit))
+        totalPages: Math.ceil(totalTransactions / parseInt(limit)),
       },
       filters: {
         fromDate: fromDate || null,
         toDate: toDate || null,
-        transactionType: transactionType || null
+        transactionType: transactionType || null,
       },
       summary: {
         totalTransactions: parseInt(transactionSummary.total_transactions),
         totalCredits: parseFloat(transactionSummary.total_credits) || 0,
         totalDebits: parseFloat(transactionSummary.total_debits) || 0,
-        netChange: parseFloat(transactionSummary.net_change) || 0
-      }
+        netChange: parseFloat(transactionSummary.net_change) || 0,
+      },
     };
 
     // Add validation for fromDate and toDate
@@ -332,7 +331,7 @@ export const getCustomerById = async (req, res) => {
       return res.status(400).json({
         message:
           "Invalid fromDate format. Please use YYYY-MM-DD or YYYY-MM-DD HH:MM:SS",
-        receivedDate: fromDate
+        receivedDate: fromDate,
       });
     }
 
@@ -340,8 +339,13 @@ export const getCustomerById = async (req, res) => {
       return res.status(400).json({
         message:
           "Invalid toDate format. Please use YYYY-MM-DD or YYYY-MM-DD HH:MM:SS",
-        receivedDate: toDate
+        receivedDate: toDate,
       });
+    }
+
+    // update customer points with net balance
+    if (transactionSummary.net_change) {
+      customer.points = transactionSummary.net_change;
     }
 
     res.json({ customer: customer });
@@ -400,7 +404,7 @@ export const createCustomer = async (req, res) => {
         address,
         stop_loss,
         default_quantity || 1,
-        photoPath
+        photoPath,
       ]
     );
 
@@ -408,14 +412,21 @@ export const createCustomer = async (req, res) => {
 
     // Add full photo URL to response
     if (customer.photo) {
-      customer.photo_url = `${req.protocol}://${req.get("host")}/${
-        customer.photo
-      }`;
+      customer.photo_url = `${req.protocol}://${req.get("host")}/${customer.photo
+        }`;
+    }
+
+    // Send welcome SMS (non-blocking - don't fail customer creation if SMS fails)
+    try {
+      let smsResponse = await sendWelcomeSMS(phone, name);
+      // console.log("SMS Response:", smsResponse);
+    } catch (smsError) {
+      console.error("Failed to send welcome SMS:", smsError);
     }
 
     res.status(201).json({
       message: "Customer created successfully",
-      customer: customer
+      customer: customer,
     });
   } catch (error) {
     console.error("Create customer error:", error);
@@ -433,7 +444,7 @@ export const updateCustomer = async (req, res) => {
       address,
       stop_loss,
       default_quantity,
-      status
+      status,
     } = req.body;
 
     // Check if customer exists
@@ -549,14 +560,13 @@ export const updateCustomer = async (req, res) => {
 
     // Add full photo URL to response
     if (customer.photo) {
-      customer.photo_url = `${req.protocol}://${req.get("host")}/${
-        customer.photo
-      }`;
+      customer.photo_url = `${req.protocol}://${req.get("host")}/${customer.photo
+        }`;
     }
 
     res.json({
       message: "Customer updated successfully",
-      customer: customer
+      customer: customer,
     });
   } catch (error) {
     console.error("Update customer error:", error);
@@ -620,7 +630,7 @@ export const deleteCustomer = async (req, res) => {
       routesCheck,
       salesCheck,
       paymentsCheck,
-      transactionsCheck
+      transactionsCheck,
     ] = await Promise.all([
       pool.query(
         "SELECT COUNT(*) as count FROM qr_codes WHERE customer_id = $1",
@@ -641,7 +651,7 @@ export const deleteCustomer = async (req, res) => {
       pool.query(
         "SELECT COUNT(*) as count FROM point_transactions WHERE customer_id = $1",
         [id]
-      )
+      ),
     ]);
 
     const associatedRecords = {
@@ -649,7 +659,7 @@ export const deleteCustomer = async (req, res) => {
       routes: parseInt(routesCheck.rows[0].count),
       sales: parseInt(salesCheck.rows[0].count),
       payments: parseInt(paymentsCheck.rows[0].count),
-      transactions: parseInt(transactionsCheck.rows[0].count)
+      transactions: parseInt(transactionsCheck.rows[0].count),
     };
 
     const totalAssociatedRecords = Object.values(associatedRecords).reduce(
@@ -675,8 +685,8 @@ export const deleteCustomer = async (req, res) => {
         message: "Customer deleted successfully",
         deletedCustomer: {
           customer_id: customer.customer_id,
-          name: customer.name
-        }
+          name: customer.name,
+        },
       });
     }
 
@@ -687,13 +697,13 @@ export const deleteCustomer = async (req, res) => {
           "Customer has associated records. Use ?force=true to delete all associated data.",
         customer: {
           customer_id: customer.customer_id,
-          name: customer.name
+          name: customer.name,
         },
         associatedRecords: associatedRecords,
         totalAssociatedRecords: totalAssociatedRecords,
         warning:
           "Using force=true will permanently delete all associated data including QR codes, routes, sales history, payments, and point transactions!",
-        deletionUrl: `${req.originalUrl}?force=true`
+        deletionUrl: `${req.originalUrl}?force=true`,
       });
     }
 
@@ -746,7 +756,7 @@ export const deleteCustomer = async (req, res) => {
       // 5. Delete payment logs
       if (associatedRecords.payments > 0) {
         await client.query("DELETE FROM payment_logs WHERE customer_id = $1", [
-          id
+          id,
         ]);
         console.log(`Deleted ${associatedRecords.payments} payment logs`);
       }
@@ -772,13 +782,13 @@ export const deleteCustomer = async (req, res) => {
         message: "Customer and all associated records deleted successfully",
         deletedCustomer: {
           customer_id: customer.customer_id,
-          name: customer.name
+          name: customer.name,
         },
         deletedRecords: {
           ...associatedRecords,
-          photoFile: customer.photo ? true : false
+          photoFile: customer.photo ? true : false,
         },
-        totalRecordsDeleted: totalAssociatedRecords + 1 // +1 for the customer record
+        totalRecordsDeleted: totalAssociatedRecords + 1, // +1 for the customer record
       });
     } catch (error) {
       await client.query("ROLLBACK");
@@ -800,7 +810,7 @@ export const deleteCustomer = async (req, res) => {
         error: "Foreign key constraint violation",
         detail: detail,
         solution:
-          "Add ?force=true to your request URL to enable cascade deletion"
+          "Add ?force=true to your request URL to enable cascade deletion",
       });
     }
 
@@ -831,13 +841,21 @@ export const getCustomerPoints = async (req, res) => {
 export const addCustomerPoints = async (req, res) => {
   try {
     const { id } = req.params;
-    var { points } = req.body;
+    var { points, date } = req.body;
     const transactionType = points < 0 ? "debit" : "credit";
 
     if (!points) {
       return res
         .status(400)
         .json({ message: "Valid points value is required" });
+    }
+
+    if (date && !isValidDateTime(date)) {
+      return res.status(400).json({
+        message:
+          "Invalid date format. Please use YYYY-MM-DD or YYYY-MM-DD HH:MM:SS",
+        receivedDate: date,
+      });
     }
 
     const checkResult = await pool.query(
@@ -865,9 +883,9 @@ export const addCustomerPoints = async (req, res) => {
 
       // Log transaction WITHOUT balance columns
       await client.query(
-        `INSERT INTO point_transactions (customer_id, transaction_type, points, performed_by)
-         VALUES ($1, $2, $3, $4)`,
-        [id, transactionType, Math.abs(points), req.user.user_id]
+        `INSERT INTO point_transactions (customer_id, transaction_type, points,date, performed_by)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [id, transactionType, Math.abs(points), date, req.user.user_id]
       );
 
       await client.query("COMMIT");
@@ -878,8 +896,8 @@ export const addCustomerPoints = async (req, res) => {
         transaction: {
           added: points,
           previous_balance: currentPoints,
-          new_balance: newBalance
-        }
+          new_balance: newBalance,
+        },
       });
     } catch (error) {
       await client.query("ROLLBACK");
@@ -898,7 +916,7 @@ export const deductCustomerPoints = async (req, res) => {
     const { id } = req.params;
     const { points, date } = req.body;
 
-    if (!points || points <= 0) {
+    if (!points || points < 0) {
       return res
         .status(400)
         .json({ message: "Valid points value is required" });
@@ -908,7 +926,7 @@ export const deductCustomerPoints = async (req, res) => {
       return res.status(400).json({
         message:
           "Invalid date format. Please use YYYY-MM-DD or YYYY-MM-DD HH:MM:SS",
-        receivedDate: date
+        receivedDate: date,
       });
     }
 
@@ -931,7 +949,7 @@ export const deductCustomerPoints = async (req, res) => {
       currentPoints - points < stopLoss
     ) {
       return res.status(400).json({
-        message: `Cannot deduct points. Points would go below stop loss limit of ${stopLoss}`
+        message: `Cannot deduct points. Points would go below stop loss limit of ${stopLoss}`,
       });
     }
 
@@ -951,10 +969,31 @@ export const deductCustomerPoints = async (req, res) => {
       await client.query(
         `INSERT INTO point_transactions (customer_id, transaction_type, points, date, performed_by)
          VALUES ($1, $2, $3, $4, $5)`,
-        [id, "debit", points, date || null, req.user.user_id]
+        [id, "debit", points, date, req.user.user_id]
       );
 
       await client.query("COMMIT");
+
+
+      // Fetch customer phone for SMS
+      const customerPhoneResult = await pool.query(
+        "SELECT phone FROM customers WHERE customer_id = $1",
+        [id]
+      );
+
+      if (customerPhoneResult.rows.length > 0) {
+        const customerPhone = customerPhoneResult.rows[0].phone;
+        try {
+          await sendCreditDeductedSMS(
+            customerPhone,
+            points,
+            newBalance
+          );
+        } catch (smsError) {
+          console.error("Failed to send credit deducted SMS:", smsError);
+          // Don't fail the deduction if SMS fails
+        }
+      }
 
       res.json({
         message: "Points deducted successfully",
@@ -962,8 +1001,8 @@ export const deductCustomerPoints = async (req, res) => {
         transaction: {
           deducted: points,
           previous_balance: currentPoints,
-          new_balance: newBalance
-        }
+          new_balance: newBalance,
+        },
       });
     } catch (error) {
       await client.query("ROLLBACK");
@@ -1014,8 +1053,8 @@ export const getCustomerPaymentLogs = async (req, res) => {
         page,
         limit,
         totalCount,
-        totalPages: Math.ceil(totalCount / limit)
-      }
+        totalPages: Math.ceil(totalCount / limit),
+      },
     });
   } catch (error) {
     console.error("Get customer payment logs error:", error);
@@ -1070,8 +1109,8 @@ export const getCustomerRoutes = async (req, res) => {
         page,
         limit,
         totalCount,
-        totalPages: Math.ceil(totalCount / limit)
-      }
+        totalPages: Math.ceil(totalCount / limit),
+      },
     });
   } catch (error) {
     console.error("Get customer routes error:", error);
@@ -1080,19 +1119,80 @@ export const getCustomerRoutes = async (req, res) => {
 };
 
 // All Transaction Combined
-export const getCustomerTransactions = async (req, res) => {
+/* export const getCustomerTransactions = async (req, res) => {
   try {
+    const type = req.query.type || "all";
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 500;
     const offset = (page - 1) * limit;
+    const { fromDate, toDate } = req.query;
 
+    // Validate date formats if provided
+    if (fromDate && !isValidDateTime(fromDate)) {
+      return res.status(400).json({
+        message:
+          "Invalid fromDate format. Please use YYYY-MM-DD or YYYY-MM-DD HH:MM:SS",
+        receivedDate: fromDate,
+      });
+    }
+
+    if (toDate && !isValidDateTime(toDate)) {
+      return res.status(400).json({
+        message:
+          "Invalid toDate format. Please use YYYY-MM-DD or YYYY-MM-DD HH:MM:SS",
+        receivedDate: toDate,
+      });
+    }
+
+    // Build dynamic query with filters
+    let whereConditions = [];
+    let queryParams = [];
+    let paramCounter = 1;
+
+    // Add type filter
+    if (type === "credit") {
+      whereConditions.push(`pt.transaction_type = $${paramCounter}`);
+      queryParams.push("credit");
+      paramCounter++;
+    } else if (type === "debit") {
+      whereConditions.push(`pt.transaction_type = $${paramCounter}`);
+      queryParams.push("debit");
+      paramCounter++;
+    }
+
+    // Add date filters
+    if (fromDate) {
+      whereConditions.push(`DATE(pt.created_at) >= $${paramCounter}`);
+      queryParams.push(fromDate);
+      paramCounter++;
+    }
+
+    if (toDate) {
+      whereConditions.push(`DATE(pt.created_at) <= $${paramCounter}`);
+      queryParams.push(toDate);
+      paramCounter++;
+    }
+
+    // Build WHERE clause - FIX: Only add WHERE if there are conditions
+    const whereClause =
+      whereConditions.length > 0
+        ? `WHERE ${whereConditions.join(" AND ")}`
+        : "";
+
+    // Add pagination parameters
+    const limitParam = paramCounter;
+    const offsetParam = paramCounter + 1;
+    queryParams.push(limit, offset);
+
+    // Main query with fixed parameter references
     const result = await pool.query(
       `SELECT pt.*, c.name AS customer_name, c.phone AS customer_phone
        FROM point_transactions pt
        JOIN customers c ON pt.customer_id = c.customer_id
+       ${whereClause}
        ORDER BY pt.created_at DESC
-       LIMIT $1 OFFSET $2`,
-      [limit, offset]
+       LIMIT $${limitParam} OFFSET $${offsetParam}`,
+      queryParams
     );
 
     // Group by customer and calculate balances
@@ -1118,9 +1218,17 @@ export const getCustomerTransactions = async (req, res) => {
       (a, b) => new Date(b.created_at) - new Date(a.created_at)
     );
 
+    // Get total count for pagination - FIX: Use same WHERE clause and parameters
+    const countQueryParams = queryParams.slice(0, paramCounter - 1); // Exclude limit and offset
+
     const countResult = await pool.query(
-      `SELECT COUNT(*) FROM point_transactions`
+      `SELECT COUNT(*)
+       FROM point_transactions pt
+       JOIN customers c ON pt.customer_id = c.customer_id
+       ${whereClause}`,
+      countQueryParams
     );
+
     const totalCount = parseInt(countResult.rows[0].count);
 
     res.json({
@@ -1129,8 +1237,217 @@ export const getCustomerTransactions = async (req, res) => {
         page,
         limit,
         totalCount,
-        totalPages: Math.ceil(totalCount / limit)
+        totalPages: Math.ceil(totalCount / limit),
+      },
+    });
+  } catch (error) {
+    console.error("Get customer transactions error:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+}; */
+
+/**
+ * Retrieves customer transactions with filtering, pagination, and balance calculations
+ *
+ * @async
+ * @function getCustomerTransactions
+ * @param {Object} req - Express request object
+ * @param {Object} req.query - Query parameters
+ * @param {string} [req.query.type="all"] - Transaction type filter ("credit", "debit", or "all")
+ * @param {string} [req.query.page="1"] - Page number for pagination
+ * @param {string} [req.query.limit="500"] - Number of records per page
+ * @param {string} [req.query.fromDate] - Start date filter (YYYY-MM-DD or YYYY-MM-DD HH:MM:SS)
+ * @param {string} [req.query.toDate] - End date filter (YYYY-MM-DD or YYYY-MM-DD HH:MM:SS)
+ * @param {string} [req.query.sort] - Sorting option (e.g. name-asc name-desc date-asc date-desc points-asc points-desc )
+ *  * @param {Object} res - Express response object
+ *
+ * @returns {Promise<void>} Returns JSON response with transactions data
+ *
+ * @description
+ * This function fetches customer point transactions from the database with support for:
+ * - Type filtering (credit/debit transactions)
+ * - Date range filtering
+ * - Pagination
+ * - Balance calculations for each transaction
+ * - Summary statistics (total amounts, credits, debits)
+ *
+ * @example
+ * // GET /api/customers/transactions?type=credit&page=1&limit=10&fromDate=2024-01-01&toDate=2024-01-31
+ *
+ * @throws {400} Invalid date format error
+ * @throws {500} Server error for database or processing issues
+ */
+export const getCustomerTransactions = async (req, res) => {
+  try {
+    const type = req.query.type || "all";
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 500;
+    const offset = (page - 1) * limit;
+    const { fromDate, toDate, sort } = req.query;
+
+    // add sorting logic {by name a-z , z-a, by date latest first, oldest first, points high to low, low to high}
+    const sortOptions = {
+      "name-asc": "c.name ASC",
+      "name-desc": "c.name DESC",
+      "date-asc": "pt.date ASC",
+      "date-desc": "pt.date DESC",
+      "points-asc": "pt.points ASC",
+      "points-desc": "pt.points DESC",
+    };
+
+    const sortKey = sort ? sort.toString().trim() : null;
+    const orderBy =
+      sortKey && sortOptions[sortKey]
+        ? sortOptions[sortKey]
+        : "pt.date DESC";
+
+    // Validate date formats if provided
+    if (fromDate && !isValidDateTime(fromDate)) {
+      return res.status(400).json({
+        message:
+          "Invalid fromDate format. Please use YYYY-MM-DD or YYYY-MM-DD HH:MM:SS",
+        receivedDate: fromDate,
+      });
+    }
+
+    if (toDate && !isValidDateTime(toDate)) {
+      return res.status(400).json({
+        message:
+          "Invalid toDate format. Please use YYYY-MM-DD or YYYY-MM-DD HH:MM:SS",
+        receivedDate: toDate,
+      });
+    }
+
+    // Build dynamic query with filters
+    let whereConditions = [];
+    let queryParams = [];
+    let paramCounter = 1;
+
+    // Add type filter
+    if (type === "credit") {
+      whereConditions.push(`pt.transaction_type = $${paramCounter}`);
+      queryParams.push("credit");
+      paramCounter++;
+    } else if (type === "debit") {
+      whereConditions.push(`pt.transaction_type = $${paramCounter}`);
+      queryParams.push("debit");
+      paramCounter++;
+    }
+
+    // Add date filters
+    if (fromDate) {
+      whereConditions.push(`DATE(pt.date) >= $${paramCounter}`);
+      queryParams.push(fromDate);
+      paramCounter++;
+    }
+
+    if (toDate) {
+      whereConditions.push(`DATE(pt.date) <= $${paramCounter}`);
+      queryParams.push(toDate);
+      paramCounter++;
+    }
+
+    // Build WHERE clause - FIX: Only add WHERE if there are conditions
+    const whereClause =
+      whereConditions.length > 0
+        ? `WHERE ${whereConditions.join(" AND ")}`
+        : "";
+
+    // Add pagination parameters
+    const limitParam = paramCounter;
+    const offsetParam = paramCounter + 1;
+    queryParams.push(limit, offset);
+
+    // Main query with fixed parameter references
+    const result = await pool.query(
+      `SELECT pt.*, c.name AS customer_name, c.phone AS customer_phone
+       FROM point_transactions pt
+       JOIN customers c ON pt.customer_id = c.customer_id
+       ${whereClause}
+       ORDER BY ${orderBy}
+       LIMIT $${limitParam} OFFSET $${offsetParam}`,
+      queryParams
+    );
+
+    // Group by customer and calculate balances
+    const customerGroups = new Map();
+    for (const txn of result.rows) {
+      if (!customerGroups.has(txn.customer_id)) {
+        customerGroups.set(txn.customer_id, []);
       }
+      customerGroups.get(txn.customer_id).push(txn);
+    }
+
+    const allTransactionsWithBalances = [];
+    for (const [customerId, transactions] of customerGroups) {
+      const withBalances = await calculateTransactionBalances(
+        transactions,
+        customerId
+      );
+      allTransactionsWithBalances.push(...withBalances);
+    }
+
+    // Sort by date DESC to maintain order
+    if (sortKey && sortOptions[sortKey]) {
+      allTransactionsWithBalances.sort((a, b) => {
+        switch (sortKey) {
+          case "name-asc":
+            return a.customer_name.localeCompare(b.customer_name);
+          case "name-desc":
+            return b.customer_name.localeCompare(a.customer_name);
+          case "date-asc":
+            return new Date(a.date) - new Date(b.date);
+          case "date-desc":
+            return new Date(b.date) - new Date(a.date);
+          case "points-asc":
+            return parseInt(a.points) - parseInt(b.points);
+          case "points-desc":
+            return parseInt(b.points) - parseInt(a.points);
+          default:
+            return new Date(b.date) - new Date(a.date);
+        }
+      });
+    } else {
+      // Default sort by date DESC only if no valid sort provided
+      allTransactionsWithBalances.sort(
+        (a, b) => new Date(b.date) - new Date(a.date)
+      );
+    }
+
+    // Get total count and total amount for pagination
+    const countQueryParams = queryParams.slice(0, paramCounter - 1); // Exclude limit and offset
+
+    const countAndAmountResult = await pool.query(
+      `SELECT
+        COUNT(*) as total_count,
+        COALESCE(SUM(pt.points), 0) as total_amount,
+        COALESCE(SUM(CASE WHEN pt.transaction_type = 'credit' THEN pt.points ELSE 0 END), 0) as total_credits,
+        COALESCE(SUM(CASE WHEN pt.transaction_type = 'debit' THEN pt.points ELSE 0 END), 0) as total_debits
+       FROM point_transactions pt
+       JOIN customers c ON pt.customer_id = c.customer_id
+       ${whereClause}`,
+      countQueryParams
+    );
+
+    const totalCount = parseInt(countAndAmountResult.rows[0].total_count);
+    const totalAmount = parseFloat(countAndAmountResult.rows[0].total_amount);
+    const totalCredits = parseFloat(countAndAmountResult.rows[0].total_credits);
+    const totalDebits = parseFloat(countAndAmountResult.rows[0].total_debits);
+
+    res.json({
+      transactions: allTransactionsWithBalances,
+      pagination: {
+        page,
+        limit,
+        totalCount,
+        totalPages: Math.ceil(totalCount / limit),
+      },
+      summary: {
+        totalAmount,
+        // totalCredits,
+        // totalDebits,
+        // netAmount: totalCredits - totalDebits,
+      },
     });
   } catch (error) {
     console.error("Get customer transactions error:", error);
@@ -1221,7 +1538,7 @@ export const updateTransaction = async (req, res) => {
       return res.status(400).json({
         message:
           "Invalid date format. Please use YYYY-MM-DD or YYYY-MM-DD HH:MM:SS",
-        receivedDate: date
+        receivedDate: date,
       });
     }
 
@@ -1240,7 +1557,7 @@ export const updateTransaction = async (req, res) => {
     // 4. Only allow editing debit transactions
     if (existingTransaction.transaction_type !== "debit") {
       return res.status(400).json({
-        message: "Only debit transactions can be edited"
+        message: "Only debit transactions can be edited",
       });
     }
 
@@ -1250,7 +1567,7 @@ export const updateTransaction = async (req, res) => {
       existingTransaction.reason.includes("Payment ID")
     ) {
       return res.status(400).json({
-        message: "Payment-related transactions cannot be edited"
+        message: "Payment-related transactions cannot be edited",
       });
     }
 
@@ -1272,7 +1589,7 @@ export const updateTransaction = async (req, res) => {
 
     if (!recentTransactionIds.includes(parseInt(transactionId))) {
       return res.status(400).json({
-        message: "Only last 10 debit transactions can be edited"
+        message: "Only last 10 debit transactions can be edited",
       });
     }
 
@@ -1322,7 +1639,7 @@ export const updateTransaction = async (req, res) => {
           message: `Cannot update transaction. New balance ${finalCustomerBalance} would be below stop loss limit of ${stopLoss}`,
           currentBalance: customer.points,
           newBalance: finalCustomerBalance,
-          stopLossLimit: stopLoss
+          stopLossLimit: stopLoss,
         });
       }
 
@@ -1357,7 +1674,7 @@ export const updateTransaction = async (req, res) => {
           reason || oldReason,
           oldDate,
           date || oldDate,
-          req.user.user_id
+          req.user.user_id,
         ]
       );
 
@@ -1373,13 +1690,13 @@ export const updateTransaction = async (req, res) => {
           oldReason,
           newReason: reason || oldReason,
           oldDate,
-          newDate: date || oldDate
+          newDate: date || oldDate,
         },
         customerBalance: {
           previousBalance: customer.points,
           newBalance: finalCustomerBalance,
-          balanceChange: finalCustomerBalance - customer.points
-        }
+          balanceChange: finalCustomerBalance - customer.points,
+        },
       });
     } catch (error) {
       await client.query("ROLLBACK");
@@ -1459,7 +1776,7 @@ const calculateTransactionBalances = async (transactions, customerId) => {
 
   // Get ALL transactions for this customer in chronological order
   const allTransactionsResult = await pool.query(
-    `SELECT transaction_id, transaction_type, points, created_at
+    `SELECT transaction_id, transaction_type, points, date
      FROM point_transactions
      WHERE customer_id = $1
      ORDER BY date ASC, transaction_id ASC`,
@@ -1481,7 +1798,7 @@ const calculateTransactionBalances = async (transactions, customerId) => {
 
     balanceMap.set(txn.transaction_id, {
       previous_balance: previousBalance,
-      new_balance: runningBalance
+      new_balance: runningBalance,
     });
   }
 
@@ -1490,6 +1807,6 @@ const calculateTransactionBalances = async (transactions, customerId) => {
     ...transaction,
     previous_balance:
       balanceMap.get(transaction.transaction_id)?.previous_balance || 0,
-    new_balance: balanceMap.get(transaction.transaction_id)?.new_balance || 0
+    new_balance: balanceMap.get(transaction.transaction_id)?.new_balance || 0,
   }));
 };

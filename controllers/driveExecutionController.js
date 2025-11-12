@@ -192,10 +192,10 @@ export const recordSale = async (req, res) => {
 
       await client.query("COMMIT");
 
+
       res.status(existingSaleCheck.rows.length > 0 ? 200 : 201).json({
-        message: `Sale ${
-          existingSaleCheck.rows.length > 0 ? "updated" : "recorded"
-        } successfully`,
+        message: `Sale ${existingSaleCheck.rows.length > 0 ? "updated" : "recorded"
+          } successfully`,
         sale: result.rows[0]
       });
     } catch (err) {

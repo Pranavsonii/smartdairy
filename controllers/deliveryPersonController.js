@@ -7,6 +7,7 @@ export const getDeliveryPersons = async (req, res) => {
       `SELECT d.*,
               (SELECT COUNT(*) FROM users u WHERE u.delivery_guy_id = d.delivery_guy_id) as hasAccount
        FROM delivery_guys d
+       WHERE d.is_active = true
        ORDER BY d.name`
     );
 
@@ -28,7 +29,7 @@ export const getDeliveryPersonById = async (req, res) => {
               (SELECT u.user_id FROM users u WHERE u.delivery_guy_id = d.delivery_guy_id) as user_id,
               (SELECT u.phone FROM users u WHERE u.delivery_guy_id = d.delivery_guy_id) as userPhone
        FROM delivery_guys d
-       WHERE d.delivery_guy_id = $1`,
+       WHERE d.delivery_guy_id = $1 AND d.is_active = true`,
       [id]
     );
 
@@ -92,6 +93,9 @@ export const createDeliveryPerson = async (req, res) => {
       createUserAccount = true
     } = req.body;
 
+
+    console.log(req.user);
+
     // Basic validation
     if (!name || !phone) {
       return res.status(400).json({ message: "Name and phone are required" });
@@ -133,8 +137,8 @@ export const createDeliveryPerson = async (req, res) => {
     try {
       // Create delivery person
       const deliveryPersonResult = await pool.query(
-        `INSERT INTO delivery_guys (name, phone, address)
-         VALUES ($1, $2, $3)
+        `INSERT INTO delivery_guys (name, phone, address, is_active)
+         VALUES ($1, $2, $3, true)
          RETURNING *`,
         [name, phone, address || null]
       );
@@ -189,9 +193,9 @@ export const updateDeliveryPerson = async (req, res) => {
     const { id } = req.params;
     const { name, phone, address } = req.body;
 
-    // Check if delivery person exists
+    // Check if delivery person exists and is active
     const checkResult = await pool.query(
-      "SELECT delivery_guy_id FROM delivery_guys WHERE delivery_guy_id = $1",
+      "SELECT delivery_guy_id FROM delivery_guys WHERE delivery_guy_id = $1 AND is_active = true",
       [id]
     );
 
@@ -264,49 +268,54 @@ export const deleteDeliveryPerson = async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Check if delivery person exists
-    const checkResult = await pool.query(
-      "SELECT delivery_guy_id FROM delivery_guys WHERE delivery_guy_id = $1",
+    // Soft delete - mark as inactive
+    const result = await pool.query(
+      `UPDATE delivery_guys
+       SET is_active = false,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE delivery_guy_id = $1
+       RETURNING *`,
       [id]
     );
 
-    if (checkResult.rows.length === 0) {
+    if (result.rows.length === 0) {
       return res.status(404).json({ message: "Delivery person not found" });
     }
 
-    // Check if delivery person has a user account
-    const userCheck = await pool.query(
-      "SELECT user_id FROM users WHERE delivery_guy_id = $1",
-      [id]
-    );
-
-    if (userCheck.rows.length > 0) {
-      return res.status(400).json({
-        message:
-          "Cannot delete delivery person with an active user account. Delete the user account first."
-      });
-    }
-
-    // Check if delivery person has associated drives
-    const driveCheck = await pool.query(
-      "SELECT drive_id FROM drives WHERE delivery_guy_id = $1",
-      [id]
-    );
-
-    if (driveCheck.rows.length > 0) {
-      return res.status(400).json({
-        message: "Cannot delete delivery person with associated drives."
-      });
-    }
-
-    // Delete delivery person
-    await pool.query("DELETE FROM delivery_guys WHERE delivery_guy_id = $1", [
-      id
-    ]);
-
-    res.json({ message: "Delivery person deleted successfully" });
+    res.json({
+      message: "Delivery person deleted successfully",
+      deliveryPerson: result.rows[0]
+    });
   } catch (error) {
     console.error("Delete delivery person error:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+export const restoreDeliveryPerson = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Restore delivery person - mark as active
+    const result = await pool.query(
+      `UPDATE delivery_guys
+       SET is_active = true,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE delivery_guy_id = $1
+       RETURNING *`,
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "Delivery person not found" });
+    }
+
+    res.json({
+      message: "Delivery person restored successfully",
+      deliveryPerson: result.rows[0]
+    });
+  } catch (error) {
+    console.error("Restore delivery person error:", error);
     res.status(500).json({ message: "Server error" });
   }
 };
@@ -317,9 +326,9 @@ export const getDeliveryPersonDrives = async (req, res) => {
     const { status, fromDate, toDate, page = 1, limit = 500 } = req.query;
     const offset = (page - 1) * limit;
 
-    // Check if delivery person exists
+    // Check if delivery person exists and is active
     const checkResult = await pool.query(
-      "SELECT delivery_guy_id FROM delivery_guys WHERE delivery_guy_id = $1",
+      "SELECT delivery_guy_id FROM delivery_guys WHERE delivery_guy_id = $1 AND is_active = true",
       [id]
     );
 
@@ -406,9 +415,9 @@ export const getDeliveryPersonPerformance = async (req, res) => {
     const { id } = req.params;
     const { fromDate, toDate } = req.query;
 
-    // Check if delivery person exists
+    // Check if delivery person exists and is active
     const checkResult = await pool.query(
-      "SELECT name FROM delivery_guys WHERE delivery_guy_id = $1",
+      "SELECT name FROM delivery_guys WHERE delivery_guy_id = $1 AND is_active = true",
       [id]
     );
 
